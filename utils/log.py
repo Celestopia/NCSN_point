@@ -50,6 +50,15 @@ def get_logger(log_file_path="training.log"):
     return logger
 
 
+def close_logger(logger):
+    """Close loggers and free up resources (If not, handlers in different runs can overlap.)"""
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+
+
+
+
 # TODO: tqdm progress bar will also be recorded. Waiting for a fix.
 class StreamToLogger:
     """a class to redirect stdout and stderr to a logger"""

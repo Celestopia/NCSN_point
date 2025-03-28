@@ -14,6 +14,7 @@ import logging
 import copy
 import tqdm
 import logging
+import traceback
 import json
 from torch.utils.data import DataLoader, Dataset
 from utils import set_seed
@@ -26,10 +27,10 @@ hyperparameter_dict = {
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'seed': 42,
     'model': {
-        'sigma_begin': 1.0,
+        'sigma_begin': 32,
         'sigma_end': 0.01,
-        'num_classes': 8,
-        'activation': 'gelu',
+        'num_classes': 36,
+        'activation': 'lrelu',
         'hidden_dim': 128,
     },
     'data': {
@@ -45,11 +46,12 @@ hyperparameter_dict = {
     },
     'training': {
         'batch_size': 128,
-        'n_epochs': 10,
+        'n_epochs': 20,
     },
     'sampling': {
+        'sampler': 'ald', # options: ['ald', 'fcald']
         'batch_size': 64, # TODO: 暂时没用到
-        'n_steps_each': 200,
+        'n_steps_each': 25,
         'step_lr': 0.000008,
         'k_p': 1.0,
         'k_i': 0.0,
@@ -70,6 +72,7 @@ hyperparameter_dict = {
     'saving': {
         'result_dir': 'results121',
         'experiment_dir_suffix': '',
+        'experiment_name': 'default',
         'comment': '',
     },
 }
@@ -81,17 +84,16 @@ def main(args):
     
     try:
         
-        set_seed(args.seed)
-        
         # Logging
         if not os.path.exists(args.saving.result_dir):
             os.makedirs(args.saving.result_dir)
             print("Result directory created at {}.".format(args.saving.result_dir))
         
+        time_string = str(int(time.time()))
         experiment_dir = os.path.join(
                             args.saving.result_dir,
                             'experiment_{}_{}_{}_{}_{}'.format(
-                                str(int(time.time())),
+                                time_string,
                                 str(args.model.sigma_begin),
                                 str(args.model.sigma_end),
                                 str(args.model.num_classes),
@@ -104,10 +106,18 @@ def main(args):
             os.makedirs(experiment_dir)
             print("Experiment directory created at {}.".format(experiment_dir))
 
-        from utils.log import get_logger
+        from utils.log import get_logger, close_logger
         log_file_path = os.path.join(experiment_dir, 'log.log') # Set the log path
         logger = get_logger(log_file_path=log_file_path)
 
+    except Exception as e:
+        print("Error: {}".format(e))
+        return
+
+
+    try: # Now the logger has been successfully set up, and errors can be logged in the log file.
+
+        set_seed(args.seed)
 
         # Data Preparation
         from datasets.point import generate_point_dataset, PointDataset
@@ -166,14 +176,22 @@ def main(args):
 
         initial_noise=2*torch.randn(args.data.n_test_samples,2).to('cpu')
         all_generated_samples = [initial_noise]
-        all_generated_samples.extend(anneal_Langevin_dynamics(initial_noise.to(args.device), score, sigmas,
+
+        if args.sampling.sampler == 'ald':
+            all_generated_samples.extend(anneal_Langevin_dynamics(initial_noise.to(args.device), score, sigmas,
                                                                 n_steps_each=args.sampling.n_steps_each,
                                                                 step_lr=args.sampling.step_lr,
-                                                                #k_p=args.sampling.k_p,
-                                                                #k_i=args.sampling.k_i,
-                                                                #k_d=args.sampling.k_d,
                                                                 verbose=False
                                                             ))
+        elif args.sampling.sampler == 'fcald':
+            all_generated_samples.extend(FC_ALD(initial_noise.to(args.device), score, sigmas,
+                                                    n_steps_each=args.sampling.n_steps_each,
+                                                    step_lr=args.sampling.step_lr,
+                                                    k_p=args.sampling.k_p,
+                                                    k_i=args.sampling.k_i,
+                                                    k_d=args.sampling.k_d,
+                                                    verbose=False
+                                                ))
         all_generated_samples = np.array([tensor.cpu().detach().numpy() for tensor in all_generated_samples]) # (num_classes * n_steps_each, args.data.n_test_samples, 2)
         logger.info("Generated samples shape: {}".format(all_generated_samples.shape))
 
@@ -223,9 +241,9 @@ def main(args):
             t=frame_indices[f_idx]
             plt.subplot(4, 4, i+1)
             plt.title(f"t={t}")
-            plt.text(0.02, 0.95, "KL:   {:.3e}".format(kl_divergences[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-            plt.text(0.02, 0.90, "MMD2: {:.3e}".format(mmd2s[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-            plt.text(0.02, 0.85, "WD:   {:.3e}".format(wasserstein_distances[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+            plt.text(0.02, 0.95, "KL:   {:+.3e}".format(kl_divergences[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+            plt.text(0.02, 0.90, "MMD2: {:+.3e}".format(mmd2s[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+            plt.text(0.02, 0.85, "WD:   {:+.3e}".format(wasserstein_distances[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
             plt.scatter(frame_samples[f_idx][:, 0], frame_samples[f_idx][:, 1], s=2)
             plt.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
             plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
@@ -234,7 +252,7 @@ def main(args):
         fig_save_path = os.path.join(experiment_dir,'4x4_visualization.png')
         plt.tight_layout() # Adjust subplot spacing to avoid overlap
         plt.savefig(fig_save_path, dpi=300)
-        logger.info(f"Figure saved to {fig_save_path}")
+        logger.info("Figure saved to '{}'.".format(fig_save_path))
         plt.show()
 
 
@@ -256,7 +274,7 @@ def main(args):
         ax.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
         animation_save_path = os.path.join(experiment_dir,'animation.gif')
         ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
-        logger.info(f"Animation saved to {animation_save_path}")
+        logger.info("Animation saved to '{}'.".format(animation_save_path))
         plt.show()
 
 
@@ -265,6 +283,9 @@ def main(args):
         from utils.format import NumpyEncoder
 
         result_dict = {
+            'experiment_name': args.saving.experiment_name,
+            'comment': args.saving.comment,
+            'time_string': time_string,
             'kl_divergence_final': kl_divergences[-1],
             'mmd2_rbf_final': mmd2s[-1],
             'wasserstein_distance_final': wasserstein_distances[-1],
@@ -280,25 +301,22 @@ def main(args):
         }
         result_save_path = os.path.join(experiment_dir, 'result.json')
         json.dump(result_dict, open(result_save_path, 'w'), indent=4)
-        logger.info("Experiment result saved to {}.".format(result_save_path))
+        logger.info("Experiment result saved to '{}'.".format(result_save_path))
 
         config_dict = namespace2dict(args)
         config_save_path = os.path.join(experiment_dir, 'config.json')
         json.dump(config_dict, open(config_save_path, 'w'), indent=4, cls=NumpyEncoder)
-        logger.info("Experiment config saved to {}.".format(config_save_path))
+        logger.info("Experiment config saved to '{}'.".format(config_save_path))
 
-        if args.saving.comment:
-            logger.info("Experiment Comment: {}".format(args.saving.comment))
-
-        # Close loggers and free up resources # If not, handlers in different runs can overlap.
-        for handler in logger.handlers[:]:
-            handler.close()
-            logger.removeHandler(handler)
+        close_logger(logger)
 
         return 0
 
     except Exception as e:
-        print(f'ERROR: {str(e)}')
+        logger.error("Error: {}".format(e))
+        logger.error(traceback.format_exc())
+        close_logger(logger)
+
         return e
 
 
