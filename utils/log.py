@@ -3,21 +3,21 @@ import sys
 
 
 def get_logger(log_file_path="training.log"):
-    r"""
+    """
     Return a logger object to record information in a log file.
 
     Args:
         log_file_path (str, optional): The path of the log file, where logs will be saved.
 
     Example Usage:
-        ```
-        logger = get_logger('log.log')
-        logger.debug("This is a debug message")
-        logger.info("This is an info message")
-        logger.error("This is an error message")
-        logger.warning("This is a warning message")
-        logger.critical("This is a critical message")
-        ```
+    ```
+    logger = get_logger('log.log')
+    logger.debug("This is a debug message")
+    logger.info("This is an info message")
+    logger.error("This is an error message")
+    logger.warning("This is a warning message")
+    logger.critical("This is a critical message")
+    ```
     """
     logger = logging.getLogger("logger001")
     logger.setLevel(logging.INFO)

@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import random
+import numpy as np
 from typing import Callable
 
 
@@ -9,7 +11,7 @@ def get_act(activation_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
     elif activation_name == 'relu':
         return nn.ReLU()
     elif activation_name == 'lrelu':
-        return nn.LeakyReLU(negative_slope=0.2)
+        return nn.LeakyReLU(negative_slope=0.1)
     elif activation_name =='selu':
         return nn.SELU()
     elif activation_name == 'gelu':
@@ -17,9 +19,9 @@ def get_act(activation_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
     elif activation_name =='silu':
         return nn.SiLU()
     elif activation_name == 'swish':
-        def swish(x):
-            return x * torch.sigmoid(x)
-        return swish
+        return lambda x: x * torch.sigmoid(x)
+    elif activation_name =='mish':
+        return nn.Mish()
     elif activation_name =='sigmoid':
         return nn.Sigmoid()
     elif activation_name == 'tanh':
@@ -29,10 +31,14 @@ def get_act(activation_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
 
 
 
-
-
-
-
+def set_seed(seed):
+    """Set all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    return
 
 
 

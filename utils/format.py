@@ -2,8 +2,9 @@ import argparse
 import json
 import numpy as np
 
+
 def dict2namespace(config):
-    """Reference: https://github.com/ermongroup/ncsnv2/blob/master/main.py, line 155."""
+    """Recursively convert a dictionary to a argparse.Namespace object. Reference: https://github.com/ermongroup/ncsnv2/blob/master/main.py, line 155."""
     namespace = argparse.Namespace()
     for key, value in config.items():
         if isinstance(value, dict):
@@ -12,7 +13,6 @@ def dict2namespace(config):
             new_value = value
         setattr(namespace, key, new_value)
     return namespace
-
 
 
 def namespace2dict(ns):

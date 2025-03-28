@@ -11,7 +11,8 @@ except ImportError:
 
 def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
     """
-    Wasserstein distance between two groupd of samples.
+    Wasserstein distance between two groups of samples.
+    
     Args:
         X (np.ndarray): array of shape (n_x, d)
         Y (np.ndarray): array of shape (n_y, d)
@@ -26,7 +27,7 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
         return ot.emd2(a, b, M, numItermax=numItermax)
 
     if p == 2:
-        return np.sqrt(ot.emd2(a, b, M ** 2))
+        return np.sqrt(ot.emd2(a, b, M ** 2, numItermax=numItermax))
 
 
 def gmm_estimation(data, n_components=2):
@@ -34,59 +35,53 @@ def gmm_estimation(data, n_components=2):
     Use Gaussian Mixture Model (GMM) to estimate the parameters of a mixture of Gaussians.
     
     Args:
-        data (np.ndarray): array of shape (n_samples, n_features).
+        data (np.ndarray): array of shape (n_samples, d).
         n_components (int): The number of mixture components (clusters).
     
     Returns:
         out (tuple of np.ndarray): A tuple containing:
-        - mu_fit (np.ndarray): array of shape (n_components, n_features)
-        - cov_fit (np.ndarray): array of shape (n_components, n_features, n_features)
+        - mu_fit (np.ndarray): array of shape (n_components, d)
+        - cov_fit (np.ndarray): array of shape (n_components, d, d)
         - weights_fit (np.ndarray): array of shape (n_components,)
     """
-    gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=0)
+    gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
     gmm.fit(data)
 
-    mu_fit = gmm.means_ # shape (n_components, n_features)
-    cov_fit = gmm.covariances_ # shape (n_components, n_features, n_features)
+    mu_fit = gmm.means_ # shape (n_components, d)
+    cov_fit = gmm.covariances_ # shape (n_components, d, d)
     weights_fit = gmm.weights_ # proportion of each component in the mixture
 
     return mu_fit, cov_fit, weights_fit
 
 
-
-def rbf_kernel(x, y, sigma=1.0):
+def sample_mmd2_rbf(X, Y, sigma=1.0):
     """
-    Compute the RBF kernel between two matrices x and y.
+    Compute the squared maximum mean discrepancy (MMD) between two groups of samples using the RBF kernel.
+    
+    Reference: https://jmlr.csail.mit.edu/papers/volume13/gretton12a/gretton12a.pdf, page 6, lemma 6.
 
     Args:
-        x (np.ndarray): array of shape (nx, d)
-        y (np.ndarray): array of shape (ny, d)
+        X (np.ndarray): array of shape (nx, d)
+        Y (np.ndarray): array of shape (ny, d)
         sigma (float): bandwidth of the kernel.
-
+    
     Returns:
-        np.ndarray: kernel matrix of shape (nx, ny)
+        mmd_sq (np.float64): Square MMD.
     """
-    x_sqnorms = np.sum(x**2, axis=1) # shape: (nx,)
-    y_sqnorms = np.sum(y**2, axis=1) # shape: (ny,)
-    distances = x_sqnorms[:, None] + y_sqnorms[None, :] - 2 * np.dot(x, y.T) # shape: (nx, ny)
-    return np.exp(-distances / (2 * sigma**2))
-
-
-def mmd_rbf(X, Y, sigma=1.0):
-    """
-    Compute the maximum mean discrepancy (MMD) between two groups of samples using the RBF kernel.
-
-    Args:
-        X (np.ndarray): array of shape (n_x, d)
-        Y (np.ndarray): array of shape (n_y, d)
-        sigma (float): bandwidth of the kernel.
-    """
+    def rbf_kernel_distance(x, y, sigma=1.0):
+        # x (np.ndarray): array of shape (nx, d)
+        # y (np.ndarray): array of shape (ny, d)
+        x_sqnorms = np.sum(x**2, axis=1) # shape: (nx,)
+        y_sqnorms = np.sum(y**2, axis=1) # shape: (ny,)
+        distances = x_sqnorms[:, None] + y_sqnorms[None, :] - 2 * np.dot(x, y.T) # shape: (nx, ny)
+        return np.exp(-distances / (2 * sigma**2)) # shape: (nx, ny)
+    
     m, n = X.shape[0], Y.shape[0]
     
     # Compute kernel matrices
-    K_XX = rbf_kernel(X, X, sigma)
-    K_YY = rbf_kernel(Y, Y, sigma)
-    K_XY = rbf_kernel(X, Y, sigma)
+    K_XX = rbf_kernel_distance(X, X, sigma)
+    K_YY = rbf_kernel_distance(Y, Y, sigma)
+    K_XY = rbf_kernel_distance(X, Y, sigma)
     
     # (Discard diagonal entries of K_XX and K_YY)
     mmd_sq = (np.sum(K_XX) - np.trace(K_XX)) / (m * (m - 1)) + \
@@ -95,51 +90,54 @@ def mmd_rbf(X, Y, sigma=1.0):
     return mmd_sq # MMD^2
 
 
-def kl_2d_gmms(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=10000):
+def kl_gmms(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=1000):
     """
-    Compute the KL divergence between two 2D Gaussian mixtures.
+    Compute the KL divergence between two Gaussian mixtures.
 
     Args:
         p_weights (np.ndarray): array of shape (n_components,)
-        p_means (np.ndarray): array of shape (n_components, 2)
-        p_covs (np.ndarray): array of shape (n_components, 2, 2)
+        p_means (np.ndarray): array of shape (n_components, d)
+        p_covs (np.ndarray): array of shape (n_components, d, d)
         q_weights (np.ndarray): array of shape (n_components,)
-        q_means (np.ndarray): array of shape (n_components, 2)
-        q_covs (np.ndarray): array of shape (n_components, 2, 2)
-        n_samples (int): number of samples to generate.
+        q_means (np.ndarray): array of shape (n_components, d)
+        q_covs (np.ndarray): array of shape (n_components, d, d)
+        n_samples (int): number of generated samples for Monte Carlo estimation of KL.
     
     Returns:
         out (float): KL divergence between the two GMMs.
     """
     n_components = len(p_weights)
 
-    # Generate samples from p1
-    samples = []
-    for _ in range(n_samples):
-        component = np.random.choice(n_components, p=p_weights) # int
-        mean = p_means[component] # Choose a mean from a component of GMM 1
-        cov = p_covs[component] # Choose a covariance from a component of GMM 1
-        sample = np.random.multivariate_normal(mean, cov)
-        samples.append(sample)
-    samples = np.array(samples) # Shape: (n_samples, 2)
+    # Generate samples from p
+    gmm = GaussianMixture(n_components=n_components, random_state=420)
+    gmm.weights_ = p_weights
+    gmm.means_ = p_means
+    gmm.covariances_ = p_covs
+    samples, _ = gmm.sample(n_samples) # Shape: (n_samples, d)
 
-    log_p = []
-    for w, mean, cov in zip(p_weights, p_means, p_covs):
-        log_p.append(np.log(w) + scipy.stats.multivariate_normal.logpdf(samples, mean, cov)) # Append shape: (n_samples,)
-    log_p = np.logaddexp.reduce(log_p, axis=0) # Shape: (n_samples,)
+    def gmm_logpdf(x, weights, means, covs):
+        # x: (n_samples, d)
+        # w: (n_components,)
+        # mu: (n_components, d)
+        # cov: (n_components, d, d)
+        n_components = len(weights)
 
-    log_q = []
-    for w, mean, cov in zip(q_weights, q_means, q_covs):
-        log_q.append(np.log(w) + scipy.stats.multivariate_normal.logpdf(samples, mean, cov)) # Append shape: (n_samples,)
-    log_q = np.logaddexp.reduce(log_q, axis=0) # Shape: (n_samples,)
+        log_probs = np.array([
+                        np.log(weights[i]) + scipy.stats.multivariate_normal.logpdf(x, mean=means[i], cov=covs[i]) # log pdf for each component: log(w) + log(N(x; mean, cov)).
+                            for i in range(n_components)
+                            ])  # Shape: (n_components, n_samples)
 
-    kl = np.mean(log_p - log_q)
+        # For numerical stability, we use the log-sum-exp trick to avoid overflow.
+        return np.logaddexp.reduce(log_probs, axis=0) # ~= np.log(np.sum(np.exp(log_probs), axis=0))
+
+    log_p = gmm_logpdf(samples, p_weights, p_means, p_covs) # Shape: (n_samples,)
+    log_q = gmm_logpdf(samples, q_weights, q_means, q_covs) # Shape: (n_samples,)
+    kl = np.mean(log_p - log_q) # KL = E_{x~p}[log(p(x)) - log(q(x))]
     return kl
 
 
 if __name__ == '__main__':
-    np.random.seed(11110)
-    n = 10000
+    n_samples = 10000
     d = 2
 
     mu_true = np.array([[1, 1],
@@ -150,14 +148,31 @@ if __name__ == '__main__':
                           [0, 1]]])
     weights_true = np.array([0.80, 0.20])
 
-    samples_true_1 = np.random.multivariate_normal(mu_true[0], cov_true[0], size=(int(n*weights_true[0]),))
-    samples_true_2 = np.random.multivariate_normal(mu_true[1], cov_true[1], size=(int(n*weights_true[1]),))
-    data = np.vstack([samples_true_1, samples_true_2])
+    mu_pred = np.array([[1, 1],
+                    [6, 7]])
+    cov_pred = np.array([[[1, 0],
+                      [0, 1]],
+                     [[1, 0],
+                      [0, 1]]])
+    weights_pred = np.array([0.70, 0.30])
 
-    #print(sample_wasserstein_distance(samples_1, samples_2, p=1))
-    mu_pred, cov_pred, weights_pred = gmm_estimation(data, n_components=2)
-    kl = kl_2d_gmms(weights_true, mu_true, cov_true, weights_pred, mu_pred, cov_pred)
+    gmm_true = GaussianMixture(n_components=2, covariance_type='full', random_state=42)
+    gmm_true.weights_ = weights_true
+    gmm_true.means_ = mu_true
+    gmm_true.covariances_ = cov_true
+
+    gmm_pred = GaussianMixture(n_components=2, covariance_type='full', random_state=42)
+    gmm_pred.weights_ = weights_pred
+    gmm_pred.means_ = mu_pred
+    gmm_pred.covariances_ = cov_pred
+
+    samples_true, _ = gmm_true.sample(n_samples)
+    samples_pred, _ = gmm_pred.sample(n_samples)
+
+    #print(sample_wasserstein_distance(samples_true, samples_pred, p=1))
+    mu_pred, cov_pred, weights_pred = gmm_estimation(samples_true, n_components=2)
+    print(mu_pred, cov_pred, weights_pred)
+    kl = kl_gmms(weights_true, mu_true, cov_true, weights_pred, mu_pred, cov_pred)
     print(kl)
-    #print(mmd_rbf(samples_1, samples_2))
-
+    #print(sample_mmd2_rbf(samples_true, samples_pred))
 

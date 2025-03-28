@@ -5,8 +5,8 @@ from torch.utils.data import Dataset, DataLoader
 
 def generate_point_dataset(
     n_samples = 1000,
-    mu_true = np.array([[1, 1],
-                [6, 6]]),
+    mu_true = np.array([[-3, 3],
+                [3, 3]]),
     cov_true = np.array([[[1, 0],
                 [0, 1]],
                 [[1, 0],
