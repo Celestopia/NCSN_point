@@ -13,7 +13,7 @@ class SimpleNet1d(nn.Module):
 
     def forward(self, x, y):
         # x: (batch_size, data_dim)
-        # y: (batch_size,)
+        # y: (batch_size,), noise level index for each sample
         x = self.fc1(x)
         x = self.act(x)
         x = self.fc2(x)
@@ -41,7 +41,7 @@ class SimpleResidualBlock(nn.Module):
         res = self.fc2(res)
         res = self.bn2(res)
         x = x + res
-        x = self.act(x)
+        #x = self.act(x)
         return x
 
 class SimpleResNet(nn.Module):
@@ -56,7 +56,7 @@ class SimpleResNet(nn.Module):
     
     def forward(self, x, y):
         # x: (batch_size, data_dim)
-        # y: (batch_size,)
+        # y: (batch_size,), noise level index for each sample
         x = self.fc_in(x)
         x = self.bn_in(x)
         x = self.act(x)

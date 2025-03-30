@@ -9,6 +9,9 @@ def get_logger(log_file_path="training.log"):
     Args:
         log_file_path (str, optional): The path of the log file, where logs will be saved.
 
+    Returns:
+        logger (logging.Logger): A logger object to record information in a log file.
+
     Example Usage:
     ```
     logger = get_logger('log.log')

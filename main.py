@@ -16,9 +16,6 @@ import tqdm
 import logging
 import traceback
 import json
-from torch.utils.data import DataLoader, Dataset
-from utils import set_seed
-from utils.format import dict2namespace, namespace2dict
 matplotlib.use('Agg') # Set the backend to disable figure display window
 
 
@@ -27,6 +24,7 @@ hyperparameter_dict = {
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'seed': 42,
     'model': {
+        'model_name': 'mlp', # options: ['mlp', 'resnet']
         'sigma_begin': 32,
         'sigma_end': 0.01,
         'num_classes': 36,
@@ -57,8 +55,8 @@ hyperparameter_dict = {
         'k_i': 0.0,
         'k_d': 0.0,
     },
-    'optim': {
-        'optimizer': 'Adam',
+    'optim': { # TODO: 暂时没用到
+        'optimizer': 'adam',
         'lr': 0.0001,
         'beta1': 0.9,
         'beta2': 0.999,
@@ -76,6 +74,7 @@ hyperparameter_dict = {
         'comment': '',
     },
 }
+from utils.format import dict2namespace, namespace2dict
 args=dict2namespace(hyperparameter_dict)
 
 
@@ -117,22 +116,21 @@ def main(args):
 
     try: # Now the logger has been successfully set up, and errors can be logged in the log file.
 
+        from utils import set_seed
         set_seed(args.seed)
 
         # Data Preparation
         from datasets.point import generate_point_dataset, PointDataset
+        from torch.utils.data import DataLoader, Dataset
 
         data = generate_point_dataset(n_samples=args.data.n_train_samples, mu_true=args.data.mu_true, cov_true=args.data.cov_true, weights_true=args.data.weights_true)
         data = torch.tensor(data, dtype=torch.float32).to(args.device)
-        #data_copy = data.clone()
-        logger.info("Training data shape: {}".format(data.shape))
+        logger.info("Training data shape: {}".format(data.shape)) # Shape: (n_train_samples, 2)
 
         train_dataset = PointDataset(data)
         train_loader = DataLoader(train_dataset, batch_size=args.training.batch_size, shuffle=True, num_workers=0)
 
-        #test_dataset = PointDataset(data[:100]) # generative task, no need for test set
-        #test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=0)
-
+        # Noise Scale Generation
         sigmas = torch.tensor(
                     np.exp(
                         np.linspace(
@@ -147,8 +145,14 @@ def main(args):
         # Model Configuration
         from models.simple_models import SimpleNet1d, SimpleResNet
         from utils import get_act
+
         used_activation = get_act(args.model.activation)
-        score = SimpleNet1d(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation).to(args.device)
+        if args.model.model_name == 'mlp':
+            score = SimpleNet1d(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation).to(args.device)
+        elif args.model.model_name == 'resnet':
+            score = SimpleResNet(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation, num_blocks=3).to(args.device)
+        else:
+            raise ValueError("Model name `{}` not recognized.".format(args.model.model_name))
         optimizer = optim.Adam(score.parameters(), lr=args.optim.lr, weight_decay=args.optim.weight_decay, betas=(args.optim.beta1, args.optim.beta2), eps=args.optim.eps)
 
 
@@ -192,16 +196,16 @@ def main(args):
                                                     k_d=args.sampling.k_d,
                                                     verbose=False
                                                 ))
-        all_generated_samples = np.array([tensor.cpu().detach().numpy() for tensor in all_generated_samples]) # (num_classes * n_steps_each, args.data.n_test_samples, 2)
+        all_generated_samples = np.array([tensor.cpu().detach().numpy() for tensor in all_generated_samples]) # (num_classes * n_steps_each, n_test_samples, 2)
         logger.info("Generated samples shape: {}".format(all_generated_samples.shape))
 
 
         # Evaluation
-        from utils.measure import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, kl_gmms
+        from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, kl_gmms
 
         frame_indices = np.linspace(0, len(all_generated_samples)-1, args.visualization.n_frames, dtype=int)
         frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation, and for animation frames
-        logger.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, args.data.n_test_samples, 2)
+        logger.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
         true_samples = generate_point_dataset(n_samples=1000, mu_true=args.data.mu_true, cov_true=args.data.cov_true, weights_true=args.data.weights_true) # (1000, 2)
 
         mu_preds, cov_preds, weights_preds = [], [], []
@@ -228,10 +232,11 @@ def main(args):
             generated_samples = all_generated_samples[t] # (args.data.n_test_samples, 2)
             wasserstein_distances.append(sample_wasserstein_distance(generated_samples, true_samples))
 
-        print("Final KL divergence: ", kl_divergences[-1])
-        print("Final MMD2: ", mmd2s[-1])
-        print("Final Wasserstein Distance: ", wasserstein_distances[-1])
+        logger.info("Final KL divergence: {}".format(kl_divergences[-1]))
+        logger.info("Final MMD2: {}".format(mmd2s[-1]))
+        logger.info("Final Wasserstein Distance: {}".format(wasserstein_distances[-1]))
         print("Predicted GMM parameters: \n", mu_pred, "\n", cov_pred, "\n", weights_pred)
+
 
         # Visualization (static)
         plt.figure(figsize=args.visualization.figsize)
@@ -263,12 +268,7 @@ def main(args):
         ax.set_xlim(-12, 12)
         ax.set_ylim(-12, 12)
         frame_text_func = lambda frame: "Frame {}/{}\nKL divergence: {:.8f}\nMMD2: {:.8f}\nWasserstein Distance: {:.8f}".format(
-                                                                                                    frame,
-                                                                                                    len(frame_samples),
-                                                                                                    kl_divergences[frame],
-                                                                                                    mmd2s[frame],
-                                                                                                    wasserstein_distances[frame],
-                                                                                                )
+                                        frame, len(frame_samples), kl_divergences[frame], mmd2s[frame], wasserstein_distances[frame])
         ani = make_point_animation(fig, ax, frame_samples, frame_text_func=frame_text_func)
         ax.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
         ax.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
@@ -276,7 +276,6 @@ def main(args):
         ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
         logger.info("Animation saved to '{}'.".format(animation_save_path))
         plt.show()
-
 
 
         # Result saving

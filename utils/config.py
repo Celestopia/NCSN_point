@@ -5,6 +5,7 @@ hyperparameter_dict_default = { # version 20250328
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'seed': 42,
     'model': {
+        'model_name': 'mlp', # options: ['mlp', 'resnet']
         'sigma_begin': 32,
         'sigma_end': 0.01,
         'num_classes': 16,
@@ -35,8 +36,8 @@ hyperparameter_dict_default = { # version 20250328
         'k_i': 0.0,
         'k_d': 0.0,
     },
-    'optim': {
-        'optimizer': 'Adam',
+    'optim': { # TODO: 暂时没用到
+        'optimizer': 'adam',
         'lr': 0.0001,
         'beta1': 0.9,
         'beta2': 0.999,
