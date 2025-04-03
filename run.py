@@ -84,10 +84,8 @@ keys_list = [['sampling', 'step_lr']]
 values_list = [[0.000002,0.000004,0.000008,0.000016,0.000032,0.000064,0.000128]]
 result_dir = 'results_step_lr' 
 run(args, keys_list, values_list, result_dir)
-
-
 args=dict2namespace(hyperparameter_dict_default)
-args.sampler = 'fcald'
+args.sampling.sampler = 'fcald'
 keys_list = [['sampling', 'k_p']]
 values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
 result_dir = 'results_k_p'
@@ -95,20 +93,74 @@ run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.sampler = 'fcald'
+args.sampling.sampler = 'fcald'
 keys_list = [['sampling', 'k_i']]
 values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
-result_dir = 'results_k_p'
+result_dir = 'results_k_i'
 run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.sampler = 'fcald'
+args.sampling.sampler = 'fcald'
 keys_list = [['sampling', 'k_d']]
 values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10]]
 result_dir = 'results_k_d'
 run(args, keys_list, values_list, result_dir)
 
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_p'], ['model', 'sigma_begin']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
+result_dir = 'results_k_p_sigma_begin=1.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_i'], ['model', 'sigma_begin']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
+result_dir = 'results_k_i_sigma_begin=1.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_d'], ['model', 'sigma_begin']]
+values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
+result_dir = 'results_k_d_sigma_begin=1.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_p'], ['model', 'sigma_begin']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
+result_dir = 'results_k_p_sigma_begin=64.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_i'], ['model', 'sigma_begin']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
+result_dir = 'results_k_i_sigma_begin=64.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampling.sampler = 'fcald'
+keys_list = [['sampling', 'k_d'], ['model', 'sigma_begin']]
+values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
+result_dir = 'results_k_d_sigma_begin=64.0'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+keys_list = [['data', 'n_train_samples'], ['training', 'n_epochs']]
+values_list = [[1000,5000,20000,50000,200000,500000], [2000,400,100,40,20,4]]
+result_dir = 'results_n_train_samples_n_epochs'
+run(args, keys_list, values_list, result_dir)
 
 
 
