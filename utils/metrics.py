@@ -1,11 +1,14 @@
 import numpy as np
 from sklearn.mixture import GaussianMixture
 import scipy.stats
+import os
+os.environ["OMP_NUM_THREADS"] = "1" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
+
 
 try:
     import ot
 except ImportError:
-    print("Please install POT library by running the command 'pip install POT'.")
+    print("Error: Please install POT library by running the command 'pip install POT'.")
     exit()
 
 
@@ -18,6 +21,9 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
         Y (np.ndarray): array of shape (n_y, d)
         p (int): Wasserstein distance power. Options: [1, 2].
         numItermax (int): Maximum number of iterations for the OT solver.
+    
+    Returns:
+        out (float): Wasserstein distance between the two distributions.
     """
     a = np.ones(len(X)) / len(X) # Set probability mass (uniform distribution)
     b = np.ones(len(Y)) / len(Y)
@@ -40,18 +46,18 @@ def gmm_estimation(data, n_components=2):
     
     Returns:
         out (tuple of np.ndarray): A tuple containing:
+        - weights_fit (np.ndarray): array of shape (n_components,)
         - mu_fit (np.ndarray): array of shape (n_components, d)
         - cov_fit (np.ndarray): array of shape (n_components, d, d)
-        - weights_fit (np.ndarray): array of shape (n_components,)
     """
     gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
     gmm.fit(data)
 
+    weights_fit = gmm.weights_ # proportion of each component in the mixture
     mu_fit = gmm.means_ # shape (n_components, d)
     cov_fit = gmm.covariances_ # shape (n_components, d, d)
-    weights_fit = gmm.weights_ # proportion of each component in the mixture
 
-    return mu_fit, cov_fit, weights_fit
+    return  weights_fit, mu_fit, cov_fit
 
 
 def sample_mmd2_rbf(X, Y, sigma=1.0):
@@ -90,18 +96,40 @@ def sample_mmd2_rbf(X, Y, sigma=1.0):
     return mmd_sq # MMD^2
 
 
-def kl_gmms(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=1000):
+def gmm_logpdf(x, weights, means, covs):
+    """
+    Compute the log-pdf of a set of samples under a GMM with given parameters.
+
+    Args:
+        x (np.ndarray): Array of shape (n_samples, d)
+        weights (np.ndarray): Array of shape (n_components,)
+        means (np.ndarray): Array of shape (n_components, d)
+        covs (np.ndarray): Array of shape (n_components, d, d)
+    
+    Returns:
+        out (np.ndarray): Array of shape (n_samples,), the log-pdf of each sample.
+    """
+    n_components = len(weights)
+    log_probs = np.array([
+                    np.log(weights[i]) + scipy.stats.multivariate_normal.logpdf(x, mean=means[i], cov=covs[i]) # log pdf for each component: log(w) + log(N(x; mean, cov)).
+                        for i in range(n_components)
+                        ])  # Shape: (n_components, n_samples)
+    # For numerical stability, we use the log-sum-exp trick to avoid overflow.
+    return np.logaddexp.reduce(log_probs, axis=0) # = np.log(np.sum(np.exp(log_probs), axis=0))
+
+
+def gmm_kl(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=10000):
     """
     Compute the KL divergence between two Gaussian mixtures.
 
     Args:
-        p_weights (np.ndarray): array of shape (n_components,)
-        p_means (np.ndarray): array of shape (n_components, d)
-        p_covs (np.ndarray): array of shape (n_components, d, d)
-        q_weights (np.ndarray): array of shape (n_components,)
-        q_means (np.ndarray): array of shape (n_components, d)
-        q_covs (np.ndarray): array of shape (n_components, d, d)
-        n_samples (int): number of generated samples for Monte Carlo estimation of KL.
+        p_weights (np.ndarray): Array of shape (n_components,)
+        p_means (np.ndarray): Array of shape (n_components, d)
+        p_covs (np.ndarray): Array of shape (n_components, d, d)
+        q_weights (np.ndarray): Array of shape (n_components,)
+        q_means (np.ndarray): Array of shape (n_components, d)
+        q_covs (np.ndarray): Array of shape (n_components, d, d)
+        n_samples (int): Number of generated samples for Monte Carlo estimation of KL.
     
     Returns:
         out (float): KL divergence between the two GMMs.
@@ -109,31 +137,32 @@ def kl_gmms(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=10
     n_components = len(p_weights)
 
     # Generate samples from p
-    gmm = GaussianMixture(n_components=n_components, random_state=420)
+    gmm = GaussianMixture(n_components=n_components)
     gmm.weights_ = p_weights
     gmm.means_ = p_means
     gmm.covariances_ = p_covs
     samples, _ = gmm.sample(n_samples) # Shape: (n_samples, d)
-
-    def gmm_logpdf(x, weights, means, covs):
-        # x: (n_samples, d)
-        # w: (n_components,)
-        # mu: (n_components, d)
-        # cov: (n_components, d, d)
-        n_components = len(weights)
-
-        log_probs = np.array([
-                        np.log(weights[i]) + scipy.stats.multivariate_normal.logpdf(x, mean=means[i], cov=covs[i]) # log pdf for each component: log(w) + log(N(x; mean, cov)).
-                            for i in range(n_components)
-                            ])  # Shape: (n_components, n_samples)
-
-        # For numerical stability, we use the log-sum-exp trick to avoid overflow.
-        return np.logaddexp.reduce(log_probs, axis=0) # ~= np.log(np.sum(np.exp(log_probs), axis=0))
-
     log_p = gmm_logpdf(samples, p_weights, p_means, p_covs) # Shape: (n_samples,)
     log_q = gmm_logpdf(samples, q_weights, q_means, q_covs) # Shape: (n_samples,)
     kl = np.mean(log_p - log_q) # KL = E_{x~p}[log(p(x)) - log(q(x))]
     return kl
+
+
+def gmm_log_likelihood(x, weights, means, covs):
+    """
+    Compute the **average** log-likelihood of a set of samples under a GMM with given parameters.
+
+    Args:
+        x (np.ndarray): Array of shape (n_samples, d)
+        weights (np.ndarray): Array of shape (n_components,)
+        means (np.ndarray): Array of shape (n_components, d)
+        covs (np.ndarray): Array of shape (n_components, d, d)
+    
+    Returns:
+        out (float): log-likelihood of the samples under the GMM.
+    """
+    return np.mean(gmm_logpdf(x, weights, means, covs))
+
 
 
 if __name__ == '__main__':
@@ -170,9 +199,16 @@ if __name__ == '__main__':
     samples_pred, _ = gmm_pred.sample(n_samples)
 
     #print(sample_wasserstein_distance(samples_true, samples_pred, p=1))
-    mu_pred, cov_pred, weights_pred = gmm_estimation(samples_true, n_components=2)
-    print(mu_pred, cov_pred, weights_pred)
-    kl = kl_gmms(weights_true, mu_true, cov_true, weights_pred, mu_pred, cov_pred)
-    print(kl)
+    #mu_pred, cov_pred, weights_pred = gmm_estimation(samples_true, n_components=2)
+    #print(mu_pred, cov_pred, weights_pred)
+    import time
+    
+    for _ in range(20):
+        t0=time.time()
+        kl = gmm_kl(weights_true, mu_true, cov_true, weights_pred, mu_pred, cov_pred, n_samples=100000)
+        t1=time.time()
+        #print(t1-t0)
+        print(kl)
     #print(sample_mmd2_rbf(samples_true, samples_pred))
+    #print(log_likelihood(samples_true, weights_true, mu_true, cov_true))
 

@@ -1,93 +1,115 @@
 import numpy as np
 import os
 import sys
-from main import dict2namespace, main
+from main import main
+from utils.format import dict2namespace, set_namespace_value
 from utils.config import hyperparameter_dict_default
 
 
-args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_sigma_begin'
-for i in [0.5,1.0,2.0,4.0,8.0,16.0,32.0,64.0]:
-    args.saving.experiment_name = 'sigma_begin={}'.format(i)
-    args.saving.comment = ''
-
-    args.model.sigma_begin = i
-    main(args)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_sigma_end'
-for i in [0.05,0.03,0.01,0.005,0.003,0.001]:
-    args.saving.experiment_name = 'sigma_end={}'.format(i)
-    args.saving.comment = ''
-
-    args.model.sigma_end = i
-    main(args)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_activation'
-for i in ['relu','elu','lrelu','selu','gelu','silu','swish','mish','sigmoid','tanh']:
-    args.saving.experiment_name = 'activation={}'.format(i)
-    args.saving.experiment_dir_suffix = i
-    args.saving.comment = ''
-
-    args.model.activation = i
-    main(args)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_num_classes_n_steps_each'
-for i, j in zip([8,12,16,24,30,40,60], [150,100,75,50,40,30,20]):
-    args.saving.experiment_name = 'num_classes={}, n_steps_each={}'.format(i, j)
-    args.saving.comment = ''
-
-    args.model.num_classes = i
-    args.sampling.n_steps_each = j
-    main(args)
+def run(args, keys_list, values_list, result_dir):
+    """
+    Run multiple experiments with different hyperparameters.
+    
+    Args:
+        args: argparse.Namespace, the default hyperparameters
+        keys_list (list of list): The keys of hyperparameters to be changed
+        values_list (list of list): The values of hyperparameters to be changed
+        result_dir (str): The directory to save the results
+    
+    Examples:
+    - 
+        ```python
+        keys_list = [['model', 'activation']]
+        values_list = [['relu','elu','lrelu','selu','gelu','silu','swish','mish','sigmoid','tanh']]
+        result_dir = 'results_activation' 
+        run(args, keys_list, values_list, result_dir)
+        ```
+    - 
+        ```python
+        keys_list = [['training', 'n_epochs'],['data', 'n_train_samples']]
+        values_list = [[200,80,40,20,10,5],[10000,25000,50000,100000,200000,400000]]
+        result_dir = 'results_n_train_samples_n_epochs' 
+        run(args, keys_list, values_list, result_dir)
+        ```
+    """
+    args.saving.result_dir = result_dir
+    num_exp = len(values_list[0])
+    for i in range(num_exp):
+        experiment_name = '_'.join([f'{keys[-1]}={values[i]}' for keys, values in zip(keys_list, values_list)])
+        experiment_dir_suffix = '_'.join([f'{keys[-1]}={values[i]}' for keys, values in zip(keys_list, values_list)])
+        for keys, values in zip(keys_list, values_list):
+            set_namespace_value(args, keys, values[i])
+        args.saving.experiment_name = experiment_name
+        args.saving.experiment_dir_suffix = experiment_dir_suffix
+        main(args)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_n_train_samples_n_epochs'
-for i, j in zip([10000,25000,50000,100000,200000,400000], [200,80,40,20,10,5]):
-    args.saving.experiment_name = 'n_train_samples={}, n_epochs={}'.format(i, j)
-    args.saving.experiment_dir_suffix = 'n_train_samples={}_n_epochs={}'.format(i, j)
-    args.saving.comment = ''
-
-    args.data.n_train_samples = i
-    args.training.n_epochs = j
-    main(args)
+keys_list = [['seed']]
+values_list = [[0,1,12,123,1234,12345,123456,1234567,12345678]]
+result_dir = 'results_seed' 
+run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_seed'
-for i in [0,42,123,2025,65536,9765625,20250328]:
-    args.saving.experiment_name = 'seed={}'.format(i)
-    args.saving.experiment_dir_suffix = 'seed={}'.format(i)
-    args.saving.comment = ''
-
-    args.seed = i
-    main(args)
+keys_list = [['model', 'activation']]
+values_list = [['relu','elu','lrelu','selu','gelu','silu','swish','mish','sigmoid','tanh', 'softplus']]
+result_dir = 'results_activation' 
+run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_hidden_dim'
-for i in [64,128,192,256,384,512]:
-    args.saving.experiment_name = 'hidden_dim={}'.format(i)
-    args.saving.experiment_dir_suffix = 'hidden_dim={}'.format(i)
-    args.saving.comment = ''
-
-    args.model.hidden_dim = i
-    main(args)
+keys_list = [['training', 'n_epochs']]
+values_list = [[5,10,15,20,30,40,50,60,80,100]]
+result_dir = 'results_n_epochs'
+run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.saving.result_dir = 'results_1000_test_seed'
-args.data.n_test_samples = 1000
-for i in [0,42,123,2025,3473,65536,9765625,20250328]:
-    args.saving.experiment_name = 'n_test_samples=1000, seed={}'.format(i)
-    args.saving.experiment_dir_suffix = 'n_test_samples=1000_seed={}'.format(i)
-    args.saving.comment = ''
+keys_list = [['data', 'n_train_samples']]
+values_list = [[1000,5000,20000,100000,250000,1000000]]
+result_dir = 'results_n_train_samples'
+run(args, keys_list, values_list, result_dir)
 
-    args.seed = i
-    main(args)
+
+args=dict2namespace(hyperparameter_dict_default)
+keys_list = [['sampling', 'n_steps_each']]
+values_list = [[10,20,30,40,50,75,100,150,200]]
+result_dir = 'results_n_steps_each' 
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+keys_list = [['sampling', 'step_lr']]
+values_list = [[0.000002,0.000004,0.000008,0.000016,0.000032,0.000064,0.000128]]
+result_dir = 'results_step_lr' 
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampler = 'fcald'
+keys_list = [['sampling', 'k_p']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
+result_dir = 'results_k_p'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampler = 'fcald'
+keys_list = [['sampling', 'k_i']]
+values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
+result_dir = 'results_k_p'
+run(args, keys_list, values_list, result_dir)
+
+
+args=dict2namespace(hyperparameter_dict_default)
+args.sampler = 'fcald'
+keys_list = [['sampling', 'k_d']]
+values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10]]
+result_dir = 'results_k_d'
+run(args, keys_list, values_list, result_dir)
+
+
+
+
+

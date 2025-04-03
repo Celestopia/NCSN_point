@@ -4,7 +4,4 @@ Run `main.py` to conduct training and sampling; run `run.py` to conduct multiple
 
 Results will be saved in `results` directory.
 
-Incomplete version - 20250328.
-
-
-
+Incomplete version - 20250403.

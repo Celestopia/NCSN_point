@@ -28,9 +28,30 @@ def namespace2dict(ns):
         return ns
 
 
+def get_namespace_value(namespace, keys):
+    """Get the value of a nested namespace with a series of keys."""
+    value = namespace
+    for key in keys:
+        value = getattr(value, key)
+    return value
+
+
+def set_namespace_value(namespace, keys, value):
+    """Set the value of a nested namespace with a series of keys."""
+    for key in keys[:-1]:
+        namespace = getattr(namespace, key)
+    setattr(namespace, keys[-1], value)
+    return namespace
+
+
 class NumpyEncoder(json.JSONEncoder):
     """Customized json encoder for numpy array data."""
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist() # Convert to list for json serialization.
         return json.JSONEncoder.default(self, obj)
+
+
+
+
+

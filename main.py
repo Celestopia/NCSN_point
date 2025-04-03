@@ -17,7 +17,7 @@ import logging
 import traceback
 import json
 matplotlib.use('Agg') # Set the backend to disable figure display window
-
+os.environ["OMP_NUM_THREADS"] = "1" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
 
 
 hyperparameter_dict = {
@@ -32,19 +32,20 @@ hyperparameter_dict = {
         'hidden_dim': 128,
     },
     'data': {
-        'mu_true': np.array([[-3, -3],
-                            [3, 3]]),
+        'weights_true': np.array([0.80, 0.20]),
+        'mu_true': np.array([[5, 5],
+                            [-5, -5]]),
         'cov_true': np.array([[[1, 0],
                             [0, 1]],
                             [[1, 0],
                             [0, 1]]]),
-        'weights_true': np.array([0.80, 0.20]),
         'n_train_samples': 100000,
         'n_test_samples': 100,
     },
     'training': {
         'batch_size': 128,
         'n_epochs': 20,
+        'model_load_path': None, # If not None, load the model from the specified path.
     },
     'sampling': {
         'sampler': 'ald', # options: ['ald', 'fcald']
@@ -72,6 +73,9 @@ hyperparameter_dict = {
         'experiment_dir_suffix': '',
         'experiment_name': 'default',
         'comment': '',
+        'save_model': False,
+        'save_figure': True,
+        'save_animation': True,
     },
 }
 from utils.format import dict2namespace, namespace2dict
@@ -157,125 +161,159 @@ def main(args):
 
 
         # Training
-        from Langevin import anneal_dsm_score_estimation
+        if args.training.model_load_path is not None:
+            score.load_state_dict(torch.load(args.training.model_load_path))
+            logger.info("Model loaded from {}.".format(args.training.model_load_path))
 
-        score.train()
-        step=0
-        for epoch in tqdm.tqdm(range(args.training.n_epochs), desc='Training...'):
-            for i, X in enumerate(train_loader):
-                step += 1
-                X = X.to(args.device)
+        else:
+            from Langevin import anneal_dsm_score_estimation
 
-                loss = anneal_dsm_score_estimation(score, X, sigmas)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                if step % 100 == 0:
-                    logger.info("epoch: {}, step: {}, loss: {}".format(epoch, step, loss.item()))
+            score.train()
+            step=0
+            for epoch in tqdm.tqdm(range(args.training.n_epochs), desc='Training...'):
+                for i, X in enumerate(train_loader):
+                    step += 1
+                    X = X.to(args.device)
+                    loss = anneal_dsm_score_estimation(score, X, sigmas)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    if step % 100 == 0:
+                        logger.info("epoch: {}, step: {}, loss: {}".format(epoch, step, loss.item()))
+            if args.saving.save_model:
+                model_save_path = os.path.join(experiment_dir,'scorenet_{}_{}_{}.pth'.format(
+                                        args.model.sigma_begin, args.model.sigma_end, args.model.num_classes))
+                torch.save(score.state_dict(), model_save_path)
+                logger.info("Model saved to {}.".format(model_save_path))
 
 
         # Sampling
         from Langevin import anneal_Langevin_dynamics, FC_ALD
 
-        initial_noise=2*torch.randn(args.data.n_test_samples,2).to('cpu')
+        gen = torch.Generator()
+        gen.manual_seed(42) # Set the seed for random initial noise, so that it will be the same across different runs.
+        initial_noise = (16*torch.rand(args.data.n_test_samples,2,generator=gen)-8).to('cpu') # uniformly sample from [-8, 8]
         all_generated_samples = [initial_noise]
 
         if args.sampling.sampler == 'ald':
-            all_generated_samples.extend(anneal_Langevin_dynamics(initial_noise.to(args.device), score, sigmas,
-                                                                n_steps_each=args.sampling.n_steps_each,
-                                                                step_lr=args.sampling.step_lr,
-                                                                verbose=False
-                                                            ))
+            sampler = anneal_Langevin_dynamics
         elif args.sampling.sampler == 'fcald':
-            all_generated_samples.extend(FC_ALD(initial_noise.to(args.device), score, sigmas,
-                                                    n_steps_each=args.sampling.n_steps_each,
-                                                    step_lr=args.sampling.step_lr,
-                                                    k_p=args.sampling.k_p,
-                                                    k_i=args.sampling.k_i,
-                                                    k_d=args.sampling.k_d,
-                                                    verbose=False
-                                                ))
+            from functools import partial
+            sampler = partial(FC_ALD, k_p=args.sampling.k_p, k_i=args.sampling.k_i, k_d=args.sampling.k_d)
+
+        all_generated_samples.extend(sampler(initial_noise.to(args.device), score, sigmas,
+                                                            n_steps_each=args.sampling.n_steps_each,
+                                                            step_lr=args.sampling.step_lr,
+                                                            verbose=False
+                                                        ))
+        
         all_generated_samples = np.array([tensor.cpu().detach().numpy() for tensor in all_generated_samples]) # (num_classes * n_steps_each, n_test_samples, 2)
         logger.info("Generated samples shape: {}".format(all_generated_samples.shape))
 
-
         # Evaluation
-        from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, kl_gmms
+        from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, gmm_kl, gmm_log_likelihood
 
+        def evaluate(samples, weights_true, mu_true, cov_true, n_true_samples=1000):
+            """Evaluate the samples using multiple metrics."""
+            # samples: (n_samples, 2)
+            true_samples = generate_point_dataset(n_samples=n_true_samples, mu_true=mu_true, cov_true=cov_true, weights_true=weights_true) # (1000, 2)
+            weights_pred, mu_pred, cov_pred = gmm_estimation(samples)
+            kl = gmm_kl(weights_true, mu_true, cov_true, weights_pred, mu_pred, cov_pred, n_samples=100000)
+            log_likelihood = gmm_log_likelihood(samples, weights_pred, mu_pred, cov_pred)
+            mmd2 = sample_mmd2_rbf(samples, true_samples)
+            wasserstein_distance = sample_wasserstein_distance(samples, true_samples)
+            return kl, log_likelihood, mmd2, wasserstein_distance, mu_pred, cov_pred, weights_pred
+
+        ## Evaluation - metrics of each frame
         frame_indices = np.linspace(0, len(all_generated_samples)-1, args.visualization.n_frames, dtype=int)
         frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation, and for animation frames
         logger.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
-        true_samples = generate_point_dataset(n_samples=1000, mu_true=args.data.mu_true, cov_true=args.data.cov_true, weights_true=args.data.weights_true) # (1000, 2)
 
-        mu_preds, cov_preds, weights_preds = [], [], []
-        for t in tqdm.tqdm(frame_indices, desc='Evaluating GMM...'):
-            generated_samples = all_generated_samples[t] # (args.data.n_test_samples, 2)
-            mu_pred, cov_pred, weights_pred = gmm_estimation(generated_samples)
+        kl_divergences, log_likelihoods, mmd2s, wasserstein_distances, weights_preds, mu_preds, cov_preds = [], [], [], [], [], [], []
+        for t in tqdm.tqdm(frame_indices, desc='Evaluating...'):
+            kl, log_likelihood, mmd2, wasserstein_distance, mu_pred, cov_pred, weights_pred = \
+                evaluate(all_generated_samples[t], args.data.weights_true, args.data.mu_true, args.data.cov_true)
+            kl_divergences.append(kl)
+            log_likelihoods.append(log_likelihood)
+            mmd2s.append(mmd2)
+            wasserstein_distances.append(wasserstein_distance)
             mu_preds.append(mu_pred)
             cov_preds.append(cov_pred)
             weights_preds.append(weights_pred)
 
-        kl_divergences = []
-        for i, t in tqdm.tqdm(enumerate(frame_indices), desc='Evaluating KL divergence...'):
-            generated_samples = all_generated_samples[t] # (args.data.n_test_samples, 2)
-            kl_divergences.append(kl_gmms(args.data.weights_true, args.data.mu_true, args.data.cov_true,
-                                                weights_preds[i], mu_preds[i], cov_preds[i], n_samples=10000))
+        ## Evaluation - metrics of final samples (with different seeds during sampling)
+        kl_divergence_finals = [kl_divergences[-1]]
+        log_likelihood_finals = [log_likelihoods[-1]]
+        mmd2_finals = [mmd2s[-1]]
+        wasserstein_distance_finals = [wasserstein_distances[-1]]
 
-        mmd2s = []
-        for t in tqdm.tqdm(frame_indices, desc='Evaluating MMD...'):
-            generated_samples = all_generated_samples[t] # (args.data.n_test_samples, 2)
-            mmd2s.append(sample_mmd2_rbf(generated_samples, true_samples))
+        for sampling_seed in [76923,153846,230769,307692,384615,461538,538461,615384,692307,769230,846153,923076,1000000]:
+            set_seed(sampling_seed)
+            reconstructed_samples = sampler(initial_noise.to(args.device), score, sigmas,
+                                                            n_steps_each=args.sampling.n_steps_each,
+                                                            step_lr=args.sampling.step_lr,
+                                                            verbose=False,
+                                                            final_only=True
+                                            )[0].cpu().detach().numpy() # (n_test_samples, 2)
+            kl, log_likelihood, mmd2, wasserstein_distance, _, _, _ = \
+                evaluate(reconstructed_samples, args.data.weights_true, args.data.mu_true, args.data.cov_true, 1000)
+            kl_divergence_finals.append(kl)
+            log_likelihood_finals.append(log_likelihood)
+            mmd2_finals.append(mmd2)
+            wasserstein_distance_finals.append(wasserstein_distance)
 
-        wasserstein_distances = []
-        for t in tqdm.tqdm(frame_indices, desc='Evaluating Wasserstein Distance...'):
-            generated_samples = all_generated_samples[t] # (args.data.n_test_samples, 2)
-            wasserstein_distances.append(sample_wasserstein_distance(generated_samples, true_samples))
+        kl_divergence_final, kl_divergence_final_std = np.array(kl_divergence_finals).mean(), np.array(kl_divergence_finals).std()
+        log_likelihood_final, log_likelihood_final_std = np.array(log_likelihood_finals).mean(), np.array(log_likelihood_finals).std()
+        mmd2_final, mmd2_final_std = np.array(mmd2_finals).mean(), np.array(mmd2_finals).std()
+        wasserstein_distance_final, wasserstein_distance_final_std = np.array(wasserstein_distance_finals).mean(), np.array(wasserstein_distance_finals).std()
 
-        logger.info("Final KL divergence: {}".format(kl_divergences[-1]))
-        logger.info("Final MMD2: {}".format(mmd2s[-1]))
-        logger.info("Final Wasserstein Distance: {}".format(wasserstein_distances[-1]))
-        print("Predicted GMM parameters: \n", mu_pred, "\n", cov_pred, "\n", weights_pred)
+        logger.info("Final KL divergence: {} +- 3 * {}".format(kl_divergence_final, kl_divergence_final_std))
+        logger.info("Final Log likelihood: {} +- 3 * {}".format(log_likelihood_final, log_likelihood_final_std))
+        logger.info("Final MMD2: {} +- 3 * {}".format(mmd2_final, mmd2_final_std))
+        logger.info("Final Wasserstein Distance: {} +- 3 * {}".format(wasserstein_distance_final, wasserstein_distance_final_std))
 
 
         # Visualization (static)
-        plt.figure(figsize=args.visualization.figsize)
-        for i, f_idx in enumerate(np.linspace(0, len(frame_indices)-1, 16, dtype=int)):
-            # frame_indices is the list of indices selected for evaluation and visualization. e.g. frame_indices = [0, 20, 40, 60, ..., 2000].
-            # f_idx is the index of a frame in `frame_indices`. e.g. f_idx=2, and the corresponding t is frame_indices[f_idx]=40.
-            t=frame_indices[f_idx]
-            plt.subplot(4, 4, i+1)
-            plt.title(f"t={t}")
-            plt.text(0.02, 0.95, "KL:   {:+.3e}".format(kl_divergences[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-            plt.text(0.02, 0.90, "MMD2: {:+.3e}".format(mmd2s[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-            plt.text(0.02, 0.85, "WD:   {:+.3e}".format(wasserstein_distances[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-            plt.scatter(frame_samples[f_idx][:, 0], frame_samples[f_idx][:, 1], s=2)
-            plt.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
-            plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
-            plt.scatter([mu_preds[f_idx][0][0]], [mu_preds[f_idx][0][1]], s=10, c='r')
-            plt.scatter([mu_preds[f_idx][1][0]], [mu_preds[f_idx][1][1]], s=10, c='g')
-        fig_save_path = os.path.join(experiment_dir,'4x4_visualization.png')
-        plt.tight_layout() # Adjust subplot spacing to avoid overlap
-        plt.savefig(fig_save_path, dpi=300)
-        logger.info("Figure saved to '{}'.".format(fig_save_path))
-        plt.show()
+        if args.saving.save_figure:
+            plt.figure(figsize=args.visualization.figsize)
+            for i, f_idx in enumerate(np.linspace(0, len(frame_indices)-1, 16, dtype=int)):
+                # frame_indices is the list of indices selected for evaluation and visualization. e.g. frame_indices = [0, 20, 40, 60, ..., 2000].
+                # f_idx is the index of a frame in `frame_indices`. e.g. f_idx=2, and the corresponding t is frame_indices[f_idx]=40.
+                t=frame_indices[f_idx]
+                plt.subplot(4, 4, i+1)
+                plt.title(f"t={t}")
+                plt.text(0.02, 0.95, "KL:   {:+.3e}".format(kl_divergences[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+                plt.text(0.02, 0.90, "LL:   {:+.3e}".format(log_likelihoods[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+                plt.text(0.02, 0.85, "MMD2: {:+.3e}".format(mmd2s[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+                plt.text(0.02, 0.80, "WD:   {:+.3e}".format(wasserstein_distances[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
+                plt.scatter(frame_samples[f_idx][:, 0], frame_samples[f_idx][:, 1], s=2)
+                plt.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
+                plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
+                plt.scatter([mu_preds[f_idx][0][0]], [mu_preds[f_idx][0][1]], s=10, c='r')
+                plt.scatter([mu_preds[f_idx][1][0]], [mu_preds[f_idx][1][1]], s=10, c='g')
+            fig_save_path = os.path.join(experiment_dir,'4x4_visualization.png')
+            plt.tight_layout() # Adjust subplot spacing to avoid overlap
+            plt.savefig(fig_save_path, dpi=300)
+            logger.info("Figure saved to '{}'.".format(fig_save_path))
+            plt.show()
 
 
         # Visualization (animation)
-        from utils.animation import make_point_animation
+        if args.saving.save_animation:
+            from utils.animation import make_point_animation
 
-        fig, ax = plt.subplots(figsize=args.visualization.figsize)
-        ax.set_xlim(-12, 12)
-        ax.set_ylim(-12, 12)
-        frame_text_func = lambda frame: "Frame {}/{}\nKL divergence: {:.8f}\nMMD2: {:.8f}\nWasserstein Distance: {:.8f}".format(
-                                        frame, len(frame_samples), kl_divergences[frame], mmd2s[frame], wasserstein_distances[frame])
-        ani = make_point_animation(fig, ax, frame_samples, frame_text_func=frame_text_func)
-        ax.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
-        ax.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
-        animation_save_path = os.path.join(experiment_dir,'animation.gif')
-        ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
-        logger.info("Animation saved to '{}'.".format(animation_save_path))
-        plt.show()
+            fig, ax = plt.subplots(figsize=args.visualization.figsize)
+            ax.set_xlim(-15, 15)
+            ax.set_ylim(-15, 15)
+            frame_text_func = lambda frame: "Frame {}/{}\nKL divergence: {:.8f}\nLog likelihood: {:.8f}\nMMD2: {:.8f}\nWasserstein Distance: {:.8f}".format(
+                                        frame+1, len(frame_samples), kl_divergences[frame], log_likelihoods[frame], mmd2s[frame], wasserstein_distances[frame])
+            ani = make_point_animation(fig, ax, frame_samples, frame_text_func=frame_text_func)
+            ax.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
+            ax.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
+            animation_save_path = os.path.join(experiment_dir,'animation.gif')
+            ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
+            logger.info("Animation saved to '{}'.".format(animation_save_path))
+            plt.show()
 
 
         # Result saving
@@ -285,13 +323,19 @@ def main(args):
             'experiment_name': args.saving.experiment_name,
             'comment': args.saving.comment,
             'time_string': time_string,
-            'kl_divergence_final': kl_divergences[-1],
-            'mmd2_rbf_final': mmd2s[-1],
-            'wasserstein_distance_final': wasserstein_distances[-1],
+            'kl_divergence_final': [kl_divergence_final, kl_divergence_final_std],
+            'log_likelihood_final': [log_likelihood_final, log_likelihood_final_std],
+            'mmd2_rbf_final': [mmd2_final, mmd2_final_std],
+            'wasserstein_distance_final': [wasserstein_distance_final, wasserstein_distance_final_std],
+            'weights_preds_final': weights_preds[-1].tolist(),
             'mu_preds_final': mu_preds[-1].tolist(),
             'cov_preds_final': cov_preds[-1].tolist(),
-            'weights_preds_final': weights_preds[-1].tolist(),
+            'kl_divergence_finals': kl_divergence_finals,
+            'log_likelihood_finals': log_likelihood_finals,
+            'mmd2_rbf_finals': mmd2_finals,
+            'wasserstein_distance_finals': wasserstein_distance_finals,
             'kl_divergences': kl_divergences,
+            'log_likelihoods': log_likelihoods,
             'mmd2s': mmd2s,
             'wasserstein_distances': wasserstein_distances,
             'mu_preds': [mu_pred.tolist() for mu_pred in mu_preds],

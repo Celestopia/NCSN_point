@@ -26,6 +26,8 @@ def get_act(activation_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
         return nn.Sigmoid()
     elif activation_name == 'tanh':
         return nn.Tanh()
+    elif activation_name == 'softplus':
+        return nn.Softplus()
     else:
         raise NotImplementedError('activation function does not exist!')
 
