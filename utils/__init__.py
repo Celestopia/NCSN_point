@@ -6,12 +6,13 @@ from typing import Callable
 
 
 def get_act(activation_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
-    if activation_name == 'elu':
-        return nn.ELU()
-    elif activation_name == 'relu':
+    """Return the activation function, e.g. nn.ReLU(), based on the name string."""
+    if activation_name == 'relu':
         return nn.ReLU()
     elif activation_name == 'lrelu':
         return nn.LeakyReLU(negative_slope=0.1)
+    elif activation_name == 'elu':
+        return nn.ELU()
     elif activation_name =='selu':
         return nn.SELU()
     elif activation_name == 'gelu':

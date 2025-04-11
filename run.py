@@ -47,7 +47,7 @@ def run(args, keys_list, values_list, result_dir):
 args=dict2namespace(hyperparameter_dict_default)
 keys_list = [['seed']]
 values_list = [[0,1,12,123,1234,12345,123456,1234567,12345678]]
-result_dir = 'results_seed' 
+result_dir = 'results_seed'
 run(args, keys_list, values_list, result_dir)
 
 
@@ -81,87 +81,45 @@ run(args, keys_list, values_list, result_dir)
 
 args=dict2namespace(hyperparameter_dict_default)
 keys_list = [['sampling', 'step_lr']]
-values_list = [[0.000002,0.000004,0.000008,0.000016,0.000032,0.000064,0.000128]]
+values_list = [[0.000002,0.000004,0.000006,0.000008,0.000010,0.000012,0.000014,0.00016]]
 result_dir = 'results_step_lr' 
 run(args, keys_list, values_list, result_dir)
+
+
 args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
+args.sampler = 'fcald'
 keys_list = [['sampling', 'k_p']]
 values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
 result_dir = 'results_k_p'
 run(args, keys_list, values_list, result_dir)
-
-
 args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
+args.sampler = 'fcald'
 keys_list = [['sampling', 'k_i']]
-values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0]]
+values_list = [[0.0,0.01,0.03,0.05,0.10,0.30,0.50,1.00,3.00]]
 result_dir = 'results_k_i'
 run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
+args.sampler = 'fcald'
 keys_list = [['sampling', 'k_d']]
-values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10]]
+values_list = [[0.0,0.0001,0.0003,0.0005,0.001,0.003,0.005,0.010,0.030,0.050]]
 result_dir = 'results_k_d'
 run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_p'], ['model', 'sigma_begin']]
-values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
-result_dir = 'results_k_p_sigma_begin=1.0'
+args.sampler = 'fcald'
+keys_list = [['sampling', 'k_i'], ['sampling', 'k_d']]
+values_list = [[0.0,0.01,0.03,0.05,0.10,0.30,0.50,1.00,3.00], [0.001,0.001,0.001,0.001,0.001,0.001,0.001,0.001]]
+result_dir = 'results_k_d=0.001_k_i'
 run(args, keys_list, values_list, result_dir)
 
 
 args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_i'], ['model', 'sigma_begin']]
-values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
-result_dir = 'results_k_i_sigma_begin=1.0'
+args.sampler = 'fcald'
+keys_list = [['sampling', 'k_i'], ['sampling', 'k_d']]
+values_list = [[0.0,0.01,0.03,0.05,0.10,0.30,0.50,1.00,3.00], [0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.01]]
+result_dir = 'results_k_d=0.01_k_i'
 run(args, keys_list, values_list, result_dir)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_d'], ['model', 'sigma_begin']]
-values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10], [1.0,1.0,1.0,1.0,1.0,1.0,1.0,]]
-result_dir = 'results_k_d_sigma_begin=1.0'
-run(args, keys_list, values_list, result_dir)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_p'], ['model', 'sigma_begin']]
-values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
-result_dir = 'results_k_p_sigma_begin=64.0'
-run(args, keys_list, values_list, result_dir)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_i'], ['model', 'sigma_begin']]
-values_list = [[0.1,0.3,0.5,1.0,1.5,2.0,3.0,5.0], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
-result_dir = 'results_k_i_sigma_begin=64.0'
-run(args, keys_list, values_list, result_dir)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-args.sampling.sampler = 'fcald'
-keys_list = [['sampling', 'k_d'], ['model', 'sigma_begin']]
-values_list = [[0.001,0.003,0.005,0.01,0.03,0.05,0.10], [64.0,64.0,64.0,64.0,64.0,64.0,64.0,]]
-result_dir = 'results_k_d_sigma_begin=64.0'
-run(args, keys_list, values_list, result_dir)
-
-
-args=dict2namespace(hyperparameter_dict_default)
-keys_list = [['data', 'n_train_samples'], ['training', 'n_epochs']]
-values_list = [[1000,5000,20000,50000,200000,500000], [2000,400,100,40,20,4]]
-result_dir = 'results_n_train_samples_n_epochs'
-run(args, keys_list, values_list, result_dir)
-
-
-
 

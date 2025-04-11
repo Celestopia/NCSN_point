@@ -25,10 +25,10 @@ hyperparameter_dict = {
     'seed': 42,
     'model': {
         'model_name': 'mlp', # options: ['mlp', 'resnet']
-        'sigma_begin': 32,
+        'sigma_begin': 20,
         'sigma_end': 0.01,
-        'num_classes': 36,
-        'activation': 'lrelu',
+        'num_classes': 8,
+        'activation': 'softplus',
         'hidden_dim': 128,
     },
     'data': {
@@ -40,23 +40,23 @@ hyperparameter_dict = {
                             [[1, 0],
                             [0, 1]]]),
         'n_train_samples': 100000,
-        'n_test_samples': 100,
+        'n_test_samples': 1280,
     },
     'training': {
         'batch_size': 128,
-        'n_epochs': 20,
+        'n_epochs': 10,
         'model_load_path': None, # If not None, load the model from the specified path.
     },
     'sampling': {
-        'sampler': 'ald', # options: ['ald', 'fcald']
+        'sampler': 'fcald', # options: ['ald', 'fcald']
         'batch_size': 64, # TODO: 暂时没用到
-        'n_steps_each': 25,
-        'step_lr': 0.000008,
+        'n_steps_each': 150,
+        'step_lr': 8e-6,
         'k_p': 1.0,
         'k_i': 0.0,
-        'k_d': 0.0,
+        'k_d': 0.010,
     },
-    'optim': { # TODO: 暂时没用到
+    'optim': {
         'optimizer': 'adam',
         'lr': 0.0001,
         'beta1': 0.9,
@@ -65,17 +65,20 @@ hyperparameter_dict = {
         'weight_decay': 0.000,
     },
     'visualization': {
-        'n_frames': 200,
+        'n_frames_each': 30,
         'figsize': (12,12),
+        'trajectory_start_point': [[1,1]],
     },
     'saving': {
-        'result_dir': 'results121',
+        'result_dir': 'results123',
         'experiment_dir_suffix': '',
-        'experiment_name': 'default',
+        'experiment_name': 'k_d=0.010',
         'comment': '',
         'save_model': False,
         'save_figure': True,
-        'save_animation': True,
+        'save_animation': False,
+        'save_trajectory': True,
+        'save_metric_plot': True,
     },
 }
 from utils.format import dict2namespace, namespace2dict
@@ -193,6 +196,11 @@ def main(args):
         gen = torch.Generator()
         gen.manual_seed(42) # Set the seed for random initial noise, so that it will be the same across different runs.
         initial_noise = (16*torch.rand(args.data.n_test_samples,2,generator=gen)-8).to('cpu') # uniformly sample from [-8, 8]
+
+        if args.saving.save_trajectory: # If save_trajectory is True, add a point as the first instance of initial points, and visualize its trajectory later.
+            trajectory_start_point = torch.tensor(args.visualization.trajectory_start_point) # (1,2)
+            initial_noise = torch.concat([trajectory_start_point, initial_noise], dim=0)
+
         all_generated_samples = [initial_noise]
 
         if args.sampling.sampler == 'ald':
@@ -225,7 +233,7 @@ def main(args):
             return kl, log_likelihood, mmd2, wasserstein_distance, mu_pred, cov_pred, weights_pred
 
         ## Evaluation - metrics of each frame
-        frame_indices = np.linspace(0, len(all_generated_samples)-1, args.visualization.n_frames, dtype=int)
+        frame_indices = np.linspace(1, len(all_generated_samples)-1, args.visualization.n_frames_each * args.model.num_classes + 1, dtype=int)
         frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation, and for animation frames
         logger.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
 
@@ -273,7 +281,8 @@ def main(args):
         logger.info("Final Wasserstein Distance: {} +- 3 * {}".format(wasserstein_distance_final, wasserstein_distance_final_std))
 
 
-        # Visualization (static)
+        # Visualization
+        ## Visualization - static
         if args.saving.save_figure:
             plt.figure(figsize=args.visualization.figsize)
             for i, f_idx in enumerate(np.linspace(0, len(frame_indices)-1, 16, dtype=int)):
@@ -298,7 +307,7 @@ def main(args):
             plt.show()
 
 
-        # Visualization (animation)
+        ## Visualization - animation
         if args.saving.save_animation:
             from utils.animation import make_point_animation
 
@@ -313,6 +322,65 @@ def main(args):
             animation_save_path = os.path.join(experiment_dir,'animation.gif')
             ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
             logger.info("Animation saved to '{}'.".format(animation_save_path))
+            plt.show()
+
+
+        ## Visualization - trajectory
+        if args.saving.save_trajectory:
+            from matplotlib.collections import LineCollection
+            import matplotlib.colors as mcolors
+            point_trajectory = all_generated_samples[:,0,:] # Shape: (-1, 2)
+            point_pairs = point_trajectory.reshape(-1, 1, 2)
+            segments = np.concatenate([point_pairs[:-1], point_pairs[1:]], axis=1) # An array where each element is a pair of points
+
+            t = np.linspace(0, 1, point_trajectory.shape[0])
+            lc = LineCollection(segments, cmap=plt.get_cmap('viridis'), norm=mcolors.Normalize(0, 1))
+            lc.set_array(t)
+            lc.set_linewidth(0.5)
+            lc.set_label('Trajectory')
+
+            plt.figure(figsize=args.visualization.figsize)
+            plt.gca().add_collection(lc)
+            plt.scatter([trajectory_start_point[0][0]], [trajectory_start_point[0][1]], s=50, c='r', marker='+', label='Start point')
+            plt.legend()
+            trajectory_plot_save_path = os.path.join(experiment_dir,'trajectory.svg')
+            plt.savefig(trajectory_plot_save_path, format='svg')
+            logger.info("Trajectory plot saved to '{}'.".format(trajectory_plot_save_path))
+            plt.show()
+            
+            trajectory_npy_save_path = os.path.join(experiment_dir,'trajectory.npy')
+            np.save(trajectory_npy_save_path, all_generated_samples[:,0,:])
+            logger.info("Trajectory numpy array saved to '{}'.".format(trajectory_npy_save_path))
+
+
+        ## Visualization - metric
+        if args.saving.save_metric_plot:
+            plt.figure(figsize=args.visualization.figsize)
+
+            plt.subplot(2,2,1)
+            plt.title('KL divergence')
+            plt.plot(kl_divergences)
+            plt.xlabel('Time step')
+
+            plt.subplot(2,2,2)
+            plt.title('Log likelihood')
+            plt.plot(log_likelihoods)
+            plt.xlabel('Time step')
+
+            plt.subplot(2,2,3)
+            plt.title('MMD2')
+            plt.plot(mmd2s)
+            plt.xlabel('Time step')
+
+            plt.subplot(2,2,4)
+            plt.title('Wasserstein distance')
+            plt.plot(wasserstein_distances)
+            plt.xlabel('Time step')
+
+            metric_plot_save_path = os.path.join(experiment_dir,'metric_plot.png')
+            plt.tight_layout() # Adjust subplot spacing to avoid overlap
+            plt.savefig(metric_plot_save_path)
+            logger.info("Metric plot saved to '{}'.".format(metric_plot_save_path))
             plt.show()
 
 

@@ -79,7 +79,7 @@ def save_to_xlsx(data, xlsx_save_path):
     sheet=workbook['Sheet1']
     for data_i in data: # Loop over different experiment data
         # If the data already exists in the sheet, skip it to avoid duplicates.
-        if data_i['time_string'] in [sheet.cell(row=i, column=6).value for i in range(1, sheet.max_row + 1)]:
+        if data_i['time_string'] in [sheet.cell(row=i, column=11).value for i in range(1, sheet.max_row + 1)]:
             continue
         sheet.append({
             "A": data_i["experiment_name"],
@@ -99,8 +99,8 @@ def save_to_xlsx(data, xlsx_save_path):
     return
 
 if __name__ == '__main__':
-    directory = r"E:\PythonProjects\NCSN\NCSN_custom\results_activation"
-    xlsx_save_path = 'summary11112.xlsx'
+    directory = r"E:\PythonProjects\NCSN\NCSN_custom\all_results"
+    xlsx_save_path = 'summary1111142.xlsx'
     json_paths = get_json_paths(directory)
     data = extract_data_from_json(json_paths)
     save_to_xlsx(data, xlsx_save_path)
