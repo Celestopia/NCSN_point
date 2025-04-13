@@ -5,13 +5,13 @@ from torch.utils.data import Dataset, DataLoader
 
 def generate_point_dataset(
     n_samples = 1000,
+    weights_true = np.array([0.80, 0.20]),
     mu_true = np.array([[5, 5],
                 [-5, -5]]),
     cov_true = np.array([[[1, 0],
                 [0, 1]],
                 [[1, 0],
                 [0, 1]]]),
-    weights_true = np.array([0.80, 0.20])
 ):
     """
     Generate a point dataset from a Gaussian mixture model. Each point has a dimension of d.
@@ -19,9 +19,10 @@ def generate_point_dataset(
     Args:
         n_samples (int): The total number of samples (points) to generate.
         sample_ratios (list): Ratio of points in each cluster.
-        mu_true (np.ndarray): Means of the each cluster. Shape: (n_components, d)
-        cov_true (np.ndarray): Covariances of the each cluster. Shape: (n_components, d, d)
-        weights_true (np.ndarray): Ratio of points in each cluster. Shape: (n_components,)
+        weights_true (np.ndarray): Ratio of points in each cluster. Shape: (n_components,).
+        mu_true (np.ndarray): Means of the each cluster. Shape: (n_components, d).
+        cov_true (np.ndarray): Covariances of the each cluster. Shape: (n_components, d, d).
+        
 
     Returns:
         samples (np.ndarray): The generated data of shape (n_samples, d).

@@ -1,15 +1,14 @@
+"""Metrics for quality of generation"""
 import numpy as np
 from sklearn.mixture import GaussianMixture
 import scipy.stats
 import os
-os.environ["OMP_NUM_THREADS"] = "1" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
-
-
 try:
     import ot
 except ImportError:
     print("Error: Please install POT library by running the command 'pip install POT'.")
     exit()
+os.environ["OMP_NUM_THREADS"] = "1" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
 
 
 def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
@@ -17,8 +16,8 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
     Wasserstein distance between two groups of samples.
     
     Args:
-        X (np.ndarray): array of shape (n_x, d)
-        Y (np.ndarray): array of shape (n_y, d)
+        X (np.ndarray): Array of shape (n_x, d).
+        Y (np.ndarray): Array of shape (n_y, d).
         p (int): Wasserstein distance power. Options: [1, 2].
         numItermax (int): Maximum number of iterations for the OT solver.
     
@@ -27,7 +26,7 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
     """
     a = np.ones(len(X)) / len(X) # Set probability mass (uniform distribution)
     b = np.ones(len(Y)) / len(Y)
-    M = ot.dist(X, Y, metric='euclidean') # Euclidean distance matrix of shape (n_x, n_y),, where M_{ij} = d(x_i, y_j).
+    M = ot.dist(X, Y, metric='euclidean') # Euclidean distance matrix of shape (n_x, n_y), where M_{ij} = d(x_i, y_j).
 
     if p == 1:
         return ot.emd2(a, b, M, numItermax=numItermax)
@@ -36,40 +35,17 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
         return np.sqrt(ot.emd2(a, b, M ** 2, numItermax=numItermax))
 
 
-def gmm_estimation(data, n_components=2):
-    """
-    Use Gaussian Mixture Model (GMM) to estimate the parameters of a mixture of Gaussians.
-    
-    Args:
-        data (np.ndarray): array of shape (n_samples, d).
-        n_components (int): The number of mixture components (clusters).
-    
-    Returns:
-        out (tuple of np.ndarray): A tuple containing:
-        - weights_fit (np.ndarray): array of shape (n_components,)
-        - mu_fit (np.ndarray): array of shape (n_components, d)
-        - cov_fit (np.ndarray): array of shape (n_components, d, d)
-    """
-    gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
-    gmm.fit(data)
-
-    weights_fit = gmm.weights_ # proportion of each component in the mixture
-    mu_fit = gmm.means_ # shape (n_components, d)
-    cov_fit = gmm.covariances_ # shape (n_components, d, d)
-
-    return  weights_fit, mu_fit, cov_fit
-
-
 def sample_mmd2_rbf(X, Y, sigma=1.0):
     """
     Compute the squared maximum mean discrepancy (MMD) between two groups of samples using the RBF kernel.
     
     Reference: https://jmlr.csail.mit.edu/papers/volume13/gretton12a/gretton12a.pdf, page 6, lemma 6.
+    Note that the MMD^2 is not necessarily non-negative, since its is just an unbiased estimator. For details, see page 7 of the reference paper.
 
     Args:
-        X (np.ndarray): array of shape (nx, d)
-        Y (np.ndarray): array of shape (ny, d)
-        sigma (float): bandwidth of the kernel.
+        X (np.ndarray): Array of shape (nx, d).
+        Y (np.ndarray): Array of shape (ny, d).
+        sigma (float): Bandwidth of the kernel.
     
     Returns:
         mmd_sq (np.float64): Square MMD.
@@ -96,15 +72,39 @@ def sample_mmd2_rbf(X, Y, sigma=1.0):
     return mmd_sq # MMD^2
 
 
+def gmm_estimation(data, n_components=2):
+    """
+    Use Gaussian Mixture Model (GMM) to estimate the parameters of a mixture of d-dimensional Gaussians.
+    
+    Args:
+        data (np.ndarray): Array of shape (n_samples, d).
+        n_components (int): The number of mixture components (clusters).
+    
+    Returns:
+        out (tuple of np.ndarray): A tuple containing
+            - weights_fit (np.ndarray): Array of shape (n_components,).
+            - mu_fit (np.ndarray): Array of shape (n_components, d).
+            - cov_fit (np.ndarray): Array of shape (n_components, d, d).
+    """
+    gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
+    gmm.fit(data)
+
+    weights_fit = gmm.weights_ # proportion of each component in the mixture
+    mu_fit = gmm.means_ # shape (n_components, d)
+    cov_fit = gmm.covariances_ # shape (n_components, d, d)
+
+    return  weights_fit, mu_fit, cov_fit
+
+
 def gmm_logpdf(x, weights, means, covs):
     """
-    Compute the log-pdf of a set of samples under a GMM with given parameters.
+    Compute the log-pdf of a set of samples under a d-dimensional GMM with given parameters.
 
     Args:
-        x (np.ndarray): Array of shape (n_samples, d)
-        weights (np.ndarray): Array of shape (n_components,)
-        means (np.ndarray): Array of shape (n_components, d)
-        covs (np.ndarray): Array of shape (n_components, d, d)
+        x (np.ndarray): Array of shape (n_samples, d).
+        weights (np.ndarray): Array of shape (n_components,).
+        means (np.ndarray): Array of shape (n_components, d).
+        covs (np.ndarray): Array of shape (n_components, d, d).
     
     Returns:
         out (np.ndarray): Array of shape (n_samples,), the log-pdf of each sample.
@@ -120,15 +120,15 @@ def gmm_logpdf(x, weights, means, covs):
 
 def gmm_kl(p_weights, p_means, p_covs, q_weights, q_means, q_covs, n_samples=10000):
     """
-    Compute the KL divergence between two Gaussian mixtures.
+    Compute the KL divergence between two Gaussian mixtures of dimension d.
 
     Args:
-        p_weights (np.ndarray): Array of shape (n_components,)
-        p_means (np.ndarray): Array of shape (n_components, d)
-        p_covs (np.ndarray): Array of shape (n_components, d, d)
-        q_weights (np.ndarray): Array of shape (n_components,)
-        q_means (np.ndarray): Array of shape (n_components, d)
-        q_covs (np.ndarray): Array of shape (n_components, d, d)
+        p_weights (np.ndarray): Array of shape (n_components,).
+        p_means (np.ndarray): Array of shape (n_components, d).
+        p_covs (np.ndarray): Array of shape (n_components, d, d).
+        q_weights (np.ndarray): Array of shape (n_components,).
+        q_means (np.ndarray): Array of shape (n_components, d).
+        q_covs (np.ndarray): Array of shape (n_components, d, d).
         n_samples (int): Number of generated samples for Monte Carlo estimation of KL.
     
     Returns:
@@ -153,13 +153,13 @@ def gmm_log_likelihood(x, weights, means, covs):
     Compute the **average** log-likelihood of a set of samples under a GMM with given parameters.
 
     Args:
-        x (np.ndarray): Array of shape (n_samples, d)
-        weights (np.ndarray): Array of shape (n_components,)
-        means (np.ndarray): Array of shape (n_components, d)
-        covs (np.ndarray): Array of shape (n_components, d, d)
+        x (np.ndarray): Array of shape (n_samples, d).
+        weights (np.ndarray): Array of shape (n_components,).
+        means (np.ndarray): Array of shape (n_components, d).
+        covs (np.ndarray): Array of shape (n_components, d, d).
     
     Returns:
-        out (float): log-likelihood of the samples under the GMM.
+        out (np.float64): log-likelihood of the samples under the GMM.
     """
     return np.mean(gmm_logpdf(x, weights, means, covs))
 
