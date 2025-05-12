@@ -4,7 +4,8 @@ import sys
 
 def get_logger(log_file_path="training.log"):
     """
-    Return a logger object to record information in a log file.
+    Return a root logger object to record information in a log file.
+    Use logging.info() anywhere to record information, since this is equivalent to logging.info() when logger is the root logger.
 
     Args:
         log_file_path (str, optional): The path of the log file, where logs will be saved.
@@ -14,15 +15,15 @@ def get_logger(log_file_path="training.log"):
 
     Example Usage:
     ```
-    logger = get_logger('log.log')
-    logger.debug("This is a debug message")
-    logger.info("This is an info message")
-    logger.error("This is an error message")
-    logger.warning("This is a warning message")
-    logger.critical("This is a critical message")
+    logger = get_logger('log.log') # Get the root logger
+    logging.debug("This is a debug message")
+    logging.info("This is an info message")
+    logging.error("This is an error message")
+    logging.warning("This is a warning message")
+    logging.critical("This is a critical message")
     ```
     """
-    logger = logging.getLogger("logger001")
+    logger = logging.getLogger() # Get the root logger
     logger.setLevel(logging.INFO)
 
     # Create and set a FileHandler (output to file)
@@ -35,7 +36,7 @@ def get_logger(log_file_path="training.log"):
 
     # Create Formatter
     formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(message)s", # log format
+        "%(levelname)s - %(filename)s - %(asctime)s - %(message)s", # log format
         datefmt="%Y-%m-%d %H:%M:%S" # time format
     )
 

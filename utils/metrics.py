@@ -1,8 +1,13 @@
 """Metrics for quality of generation"""
 import numpy as np
+import torch
+import torch.nn as nn
 from sklearn.mixture import GaussianMixture
 import scipy.stats
+import scipy.linalg
 import os
+import tqdm
+
 try:
     import ot
 except ImportError:
@@ -82,9 +87,9 @@ def gmm_estimation(data, n_components=2):
     
     Returns:
         out (tuple of np.ndarray): A tuple containing
-            - weights_fit (np.ndarray): Array of shape (n_components,).
-            - mu_fit (np.ndarray): Array of shape (n_components, d).
-            - cov_fit (np.ndarray): Array of shape (n_components, d, d).
+        - weights_fit (np.ndarray): Array of shape (n_components,).
+        - mu_fit (np.ndarray): Array of shape (n_components, d).
+        - cov_fit (np.ndarray): Array of shape (n_components, d, d).
     """
     gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
     gmm.fit(data)
@@ -162,6 +167,9 @@ def gmm_log_likelihood(x, weights, means, covs):
         out (np.float64): log-likelihood of the samples under the GMM.
     """
     return np.mean(gmm_logpdf(x, weights, means, covs))
+
+
+
 
 
 

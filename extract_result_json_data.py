@@ -99,8 +99,8 @@ def save_to_xlsx(data, xlsx_save_path):
     return
 
 if __name__ == '__main__':
-    directory = r"E:\PythonProjects\NCSN\NCSN_custom\all_results"
-    xlsx_save_path = 'summary1111142.xlsx'
+    directory = r"E:\PythonProjects\NCSN\NCSN_custom\results127"
+    xlsx_save_path = 'summary14233.xlsx'
     json_paths = get_json_paths(directory)
     data = extract_data_from_json(json_paths)
     save_to_xlsx(data, xlsx_save_path)

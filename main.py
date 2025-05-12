@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+import seaborn as sns
 import os
 import sys
 import time
@@ -16,12 +17,13 @@ import tqdm
 import logging
 import traceback
 import json
+sns.set_theme(style="whitegrid")
 matplotlib.use('Agg') # Set the backend to disable figure display window
-os.environ["OMP_NUM_THREADS"] = "1" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
+os.environ["OMP_NUM_THREADS"] = "5" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
 
 
 hyperparameter_dict = {
-    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+    'device': 'cuda',
     'seed': 42,
     'model': {
         'model_name': 'mlp', # options: ['mlp', 'resnet']
@@ -41,18 +43,21 @@ hyperparameter_dict = {
     },
     'training': {
         'batch_size': 128,
-        'n_epochs': 10,
-        'model_load_path': None, # If not None, load the model from the specified path.
+        'n_epochs': 60,
+        'train': False,
+        'model_load_path': r"model_weights\scorenet_20_0.01_8.pth", # If not None, load the model from the specified path.
     },
     'sampling': {
-        'sampler': 'fcald_v2', # options: ['ald', 'fcald', 'fcald_v2']
-        'batch_size': 64, # TODO: 暂时没用到
+        'sampler': 'pidald', # options: ['ald', 'pidald']
+        'batch_size': 64, # TODO: not used currently
         'n_steps_each': 150,
         'step_lr': 8e-6,
         'k_p': 1.0,
         'k_i': 0.1,
         'k_d': 0.0,
         'k_i_window_size': 150,
+        'k_i_decay': 1.00,
+        'k_d_decay': 1.00,
     },
     'logging': {
         'training_log_freq': 100,
@@ -74,10 +79,11 @@ hyperparameter_dict = {
     },
     'saving': {
         'result_dir': 'results',
-        'experiment_dir_suffix': 'k_i=0.1_window_size=150',
-        'experiment_name': 'k_i=0.1_window_size=150',
+        'experiment_dir_suffix': '',
+        'experiment_name': 'default',
         'comment': '',
-        'save_model': False,
+        'save_model': True,
+        'save_sample': True,
         'save_figure': True,
         'save_animation': False,
         'save_trajectory': False,
@@ -102,15 +108,22 @@ def main(args):
         time_string = str(int(time.time())) # Time string to identify the experiment
         experiment_dir = os.path.join(
                             args.saving.result_dir,
-                            'experiment_{}_{}_{}_{}_{}'.format(
+                            'experiment_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
                                 time_string,
                                 str(args.model.sigma_begin),
                                 str(args.model.sigma_end),
                                 str(args.model.num_classes),
-                                str(args.sampling.n_steps_each)
+                                str(args.sampling.n_steps_each),
+                                str(args.sampling.k_p),
+                                str(args.sampling.k_i),
+                                str(args.sampling.k_d),
+                                str(args.sampling.k_i_decay),
+                                str(args.sampling.k_d_decay),
                                 ))
         if args.saving.experiment_dir_suffix:
             experiment_dir += '_' + args.saving.experiment_dir_suffix # Add a suffix to quickly identify the experiment
+        elif args.saving.experiment_dir_suffix == '':
+            experiment_dir += '_' + args.saving.experiment_name # Add a name to the experiment directory
 
         if not os.path.exists(experiment_dir):
             os.makedirs(experiment_dir)
@@ -118,7 +131,14 @@ def main(args):
 
         from utils.log import get_logger, close_logger
         log_file_path = os.path.join(experiment_dir, 'log.log') # Set the log path
-        logger = get_logger(log_file_path=log_file_path)
+        logger = get_logger(log_file_path=log_file_path) # Set and get the root logger
+
+        # Save the config file
+        from utils.format import NumpyEncoder
+        config_dict = namespace2dict(args)
+        config_save_path = os.path.join(experiment_dir, 'config.json')
+        json.dump(config_dict, open(config_save_path, 'w'), indent=4, cls=NumpyEncoder)
+        logging.info("Experiment config saved to '{}'.".format(config_save_path))
 
     except Exception as e:
         print("Error: {}".format(e))
@@ -139,7 +159,7 @@ def main(args):
                                         mu_true=np.array(args.data.mu_true),
                                         cov_true=np.array(args.data.cov_true))
         data = torch.tensor(data, dtype=torch.float32).to(args.device)
-        logger.info("Training data shape: {}".format(data.shape)) # Shape: (n_train_samples, 2)
+        logging.info("Training data shape: {}".format(data.shape)) # Shape: (n_train_samples, 2)
 
         train_dataset = PointDataset(data)
         train_loader = DataLoader(train_dataset, batch_size=args.training.batch_size, shuffle=True, num_workers=0)
@@ -154,28 +174,24 @@ def main(args):
                         )
                     )
                 ).float().to(args.device) # (num_classes,)
-
+        sigmas_np = sigmas.cpu().numpy()
 
         # Model Configuration
         from models.simple_models import SimpleNet1d, SimpleResNet
         from utils import get_act
 
         used_activation = get_act(args.model.activation)
-        if args.model.model_name == 'mlp':
-            score = SimpleNet1d(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation).to(args.device)
-        elif args.model.model_name == 'resnet':
-            score = SimpleResNet(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation, num_blocks=3).to(args.device)
-        else:
-            raise ValueError("Model name `{}` not recognized.".format(args.model.model_name))
+        score = SimpleNet1d(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation).to(args.device)
         optimizer = optim.Adam(score.parameters(), lr=args.optim.lr, weight_decay=args.optim.weight_decay, betas=(args.optim.beta1, args.optim.beta2), eps=args.optim.eps)
 
 
         # Training
         if args.training.model_load_path is not None:
             score.load_state_dict(torch.load(args.training.model_load_path))
-            logger.info("Model loaded from {}.".format(args.training.model_load_path))
+            logging.info("Model loaded from '{}'.".format(args.training.model_load_path))
 
-        else:
+        if args.training.train:
+            logging.info("Start Model Training")
             from Langevin import anneal_dsm_score_estimation
 
             score.train()
@@ -188,17 +204,17 @@ def main(args):
                     loss.backward()
                     optimizer.step()
                     if step % args.logging.training_log_freq == 0:
-                        logger.info("epoch: {}, step: {}, loss: {}".format(epoch, step, loss.item()))
+                        logging.info("epoch: {}, step: {}, loss: {}".format(epoch, step, loss.item()))
                     step += 1
             if args.saving.save_model:
                 model_save_path = os.path.join(experiment_dir,'scorenet_{}_{}_{}.pth'.format(
                                         args.model.sigma_begin, args.model.sigma_end, args.model.num_classes))
                 torch.save(score.state_dict(), model_save_path)
-                logger.info("Model saved to {}.".format(model_save_path))
+                logging.info("Model saved to {}.".format(model_save_path))
 
 
         # Sampling
-        from Langevin import anneal_Langevin_dynamics, FC_ALD, FC_ALD_v2
+        from Langevin import anneal_Langevin_dynamics, PID_ALD
 
         gen = torch.Generator()
         gen.manual_seed(42) # Set the seed for random initial noise, so that it will be the same across different runs.
@@ -212,22 +228,30 @@ def main(args):
 
         if args.sampling.sampler == 'ald':
             sampler = anneal_Langevin_dynamics
-        elif args.sampling.sampler == 'fcald':
+        elif args.sampling.sampler == 'pidald':
             from functools import partial
-            sampler = partial(FC_ALD, k_p=args.sampling.k_p, k_i=args.sampling.k_i, k_d=args.sampling.k_d)
-        elif args.sampling.sampler == 'fcald_v2':
-            from functools import partial
-            sampler = partial(FC_ALD_v2, k_p=args.sampling.k_p, k_i=args.sampling.k_i, k_d=args.sampling.k_d, k_i_window_size=args.sampling.k_i_window_size, logger=logger)
+            sampler = partial(PID_ALD,
+                            k_p=args.sampling.k_p,
+                            k_i=args.sampling.k_i,
+                            k_d=args.sampling.k_d,
+                            k_i_window_size=args.sampling.k_i_window_size,
+                            k_i_decay=args.sampling.k_i_decay,
+                            k_d_decay=args.sampling.k_d_decay
+                            )
         else:
             raise ValueError("Sampler name `{}` not recognized.".format(args.sampling.sampler))
 
-        x_mods, sampler_record_dict = sampler(initial_noise.to(args.device), score, sigmas,
+        x_mods, sampler_record_dict = sampler(initial_noise.to(args.device), score, sigmas_np,
                         n_steps_each=args.sampling.n_steps_each,
                         step_lr=args.sampling.step_lr,
                         verbose=args.logging.sampling_verbose,)
         all_generated_samples.extend(x_mods)
         all_generated_samples = np.array([tensor.cpu().detach().numpy() for tensor in all_generated_samples]) # (num_classes * n_steps_each, n_test_samples, 2)
-        logger.info("Generated samples shape: {}".format(all_generated_samples.shape))
+        logging.info("Generated samples shape: {}".format(all_generated_samples.shape))
+        if args.saving.save_sample:
+            sample_save_path = os.path.join(experiment_dir, 'all_generated_samples.npy')
+            np.save(sample_save_path, all_generated_samples)
+            logging.info("Generated samples saved to {}.".format(sample_save_path))
         del x_mods # Free memory
 
         # Evaluation
@@ -247,8 +271,9 @@ def main(args):
         ## Evaluation - metrics of each frame
         frame_indices = np.linspace(1, len(all_generated_samples)-1, args.visualization.n_frames_each * args.model.num_classes + 1, dtype=int)
         frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation, and for animation frames
-        logger.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
+        logging.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
 
+        logging.info("Start Evaluation...")
         kl_divergences, log_likelihoods, mmd2s, wasserstein_distances, weights_preds, mu_preds, cov_preds = [], [], [], [], [], [], []
         for t in tqdm.tqdm(frame_indices, desc='Evaluating...'):
             kl, log_likelihood, mmd2, wasserstein_distance, mu_pred, cov_pred, weights_pred = \
@@ -267,9 +292,11 @@ def main(args):
         mmd2_finals = [mmd2s[-1]]
         wasserstein_distance_finals = [wasserstein_distances[-1]]
 
-        for sampling_seed in [76923,153846,230769,307692,384615,461538,538461,615384,692307,769230,846153,923076,1000000]:
+        for sampling_seed in [76923,
+                              153846,230769,307692,384615,461538,538461,615384,692307,769230,846153,923076,1000000
+                            ]: # Run sampling with different seeds
             set_seed(sampling_seed)
-            reconstructed_samples, _ = sampler(initial_noise.to(args.device), score, sigmas,
+            reconstructed_samples, _ = sampler(initial_noise.to(args.device), score, sigmas_np,
                                                             n_steps_each=args.sampling.n_steps_each,
                                                             step_lr=args.sampling.step_lr,
                                                             verbose=False,
@@ -288,17 +315,17 @@ def main(args):
         mmd2_final, mmd2_final_std = np.array(mmd2_finals).mean(), np.array(mmd2_finals).std()
         wasserstein_distance_final, wasserstein_distance_final_std = np.array(wasserstein_distance_finals).mean(), np.array(wasserstein_distance_finals).std()
 
-        logger.info("Final KL divergence: {} +- 3 * {}".format(kl_divergence_final, kl_divergence_final_std))
-        logger.info("Final Log likelihood: {} +- 3 * {}".format(log_likelihood_final, log_likelihood_final_std))
-        logger.info("Final MMD2: {} +- 3 * {}".format(mmd2_final, mmd2_final_std))
-        logger.info("Final Wasserstein Distance: {} +- 3 * {}".format(wasserstein_distance_final, wasserstein_distance_final_std))
+        logging.info("Final KL divergence: {} +- 3 * {}".format(kl_divergence_final, kl_divergence_final_std))
+        logging.info("Final Log likelihood: {} +- 3 * {}".format(log_likelihood_final, log_likelihood_final_std))
+        logging.info("Final MMD2: {} +- 3 * {}".format(mmd2_final, mmd2_final_std))
+        logging.info("Final Wasserstein Distance: {} +- 3 * {}".format(wasserstein_distance_final, wasserstein_distance_final_std))
 
 
         # Visualization
         ## Visualization - static
         if args.saving.save_figure:
-            # Figure of generated samples at different stages of sampling
-            plt.figure(figsize=args.visualization.figsize)
+            logging.info("Saving Point Visualization...")
+            plt.figure(figsize=args.visualization.figsize) # Figure of generated samples at different stages of sampling
             for i, f_idx in enumerate(np.linspace(0, len(frame_indices)-1, 16, dtype=int)):
                 # frame_indices is the list of indices selected for evaluation and visualization. e.g. frame_indices = [0, 20, 40, 60, ..., 2000].
                 # f_idx is the index of a frame in `frame_indices`. e.g. f_idx=2, and the corresponding t is frame_indices[f_idx]=40.
@@ -314,15 +341,16 @@ def main(args):
                 plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
                 plt.scatter([mu_preds[f_idx][0][0]], [mu_preds[f_idx][0][1]], s=10, c='r')
                 plt.scatter([mu_preds[f_idx][1][0]], [mu_preds[f_idx][1][1]], s=10, c='g')
-            fig_save_path = os.path.join(experiment_dir,'sampling_plot.png')
+            fig_save_path = os.path.join(experiment_dir,'sample_plot.png')
             plt.tight_layout() # Adjust subplot spacing to avoid overlap
             plt.savefig(fig_save_path, dpi=300)
-            logger.info("Figure saved to '{}'.".format(fig_save_path))
-            plt.show()
+            logging.info("Figure saved to '{}'.".format(fig_save_path))
+            plt.close()
 
 
         ## Visualization - animation
         if args.saving.save_animation:
+            logging.info("Saving Point Animation...")
             from utils.animation import make_point_animation
 
             fig, ax = plt.subplots(figsize=args.visualization.figsize)
@@ -335,12 +363,13 @@ def main(args):
             ax.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
             animation_save_path = os.path.join(experiment_dir,'animation.gif')
             ani.save(animation_save_path, writer='pillow', fps=30) # Save animation as gif
-            logger.info("Animation saved to '{}'.".format(animation_save_path))
-            plt.show()
+            logging.info("Animation saved to '{}'.".format(animation_save_path))
+            plt.close()
 
 
         ## Visualization - trajectory
         if args.saving.save_trajectory:
+            logging.info("Saving Point Trajectory...")
             from matplotlib.collections import LineCollection
             import matplotlib.colors as mcolors
             point_trajectory = all_generated_samples[:,0,:] # Shape: (-1, 2)
@@ -359,16 +388,17 @@ def main(args):
             plt.legend()
             trajectory_plot_save_path = os.path.join(experiment_dir,'trajectory.svg')
             plt.savefig(trajectory_plot_save_path, format='svg')
-            logger.info("Trajectory plot saved to '{}'.".format(trajectory_plot_save_path))
-            plt.show()
+            logging.info("Trajectory plot saved to '{}'.".format(trajectory_plot_save_path))
+            plt.close()
             
             trajectory_npy_save_path = os.path.join(experiment_dir,'trajectory.npy')
             np.save(trajectory_npy_save_path, all_generated_samples[:,0,:])
-            logger.info("Trajectory numpy array saved to '{}'.".format(trajectory_npy_save_path))
+            logging.info("Trajectory numpy array saved to '{}'.".format(trajectory_npy_save_path))
 
 
         ## Visualization - generation metrics
         if args.saving.save_generation_metric_plot:
+            logging.info("Saving Generation Metrics Plot...")
             def add_vertical_lines(ax, x_coords):
                 for x in x_coords:
                     ax.axvline(x=x, linestyle='--', color='red', alpha=0.3)
@@ -392,23 +422,28 @@ def main(args):
             axs[1,1].plot(wasserstein_distances)
             add_vertical_lines(axs[1,1], metric_plot_x_coords)
 
-            metric_plot_save_path = os.path.join(experiment_dir, 'generation_metric_plot.png')
+            metric_plot_save_path = os.path.join(experiment_dir, 'metric_plot.png')
             plt.tight_layout() # Adjust subplot spacing to avoid overlap
             plt.savefig(metric_plot_save_path)
-            logger.info(f"Generation metric plot saved to '{metric_plot_save_path}'.")
-            plt.show()
+            logging.info(f"Generation metric plot saved to '{metric_plot_save_path}'.")
+            plt.close()
 
         ## Visualization - sampler action record
         if args.saving.save_sampler_record_plot:
+            logging.info("Saving Sampler Record Plot...")
+            sampler_record_dir = os.path.join(experiment_dir,'sampler_record')
+            os.makedirs(sampler_record_dir, exist_ok=True)
+            logging.info(f"Sampler record directory created at '{sampler_record_dir}'.")
+
             plt.figure(figsize=(8,6))
             plt.plot(sampler_record_dict['grad_norms'], label='grad_norms')
             plt.plot(sampler_record_dict['e_int_norms'], label='e_int_norms')
             plt.plot(sampler_record_dict['e_diff_norms'], label='e_diff_norms')
             plt.legend()
             plt.yscale('log', base=2)
-            grad_pid_norms_plot_save_path = os.path.join(experiment_dir, 'grad_pid_norms_plot.png')
+            grad_pid_norms_plot_save_path = os.path.join(sampler_record_dir, 'grad_pid_norms_plot.png')
             plt.savefig(grad_pid_norms_plot_save_path)
-            logger.info(f"Grad_pid_norms plot saved to '{grad_pid_norms_plot_save_path}'.")
+            logging.info(f"Grad_pid_norms plot saved to '{grad_pid_norms_plot_save_path}'.")
             plt.close()
     
             plt.figure(figsize=(8,6))
@@ -417,9 +452,9 @@ def main(args):
             plt.plot(sampler_record_dict['D_term_norms'], label='D_term_norms')
             plt.legend()
             plt.yscale('log', base=2)
-            pid_term_norms_plot_1_save_path = os.path.join(experiment_dir, 'pid_term_norms_plot1.png')
+            pid_term_norms_plot_1_save_path = os.path.join(sampler_record_dir, 'pid_term_norms_plot1.png')
             plt.savefig(pid_term_norms_plot_1_save_path)
-            logger.info(f"PID_term_norms plot 1 saved to '{pid_term_norms_plot_1_save_path}'.")
+            logging.info(f"PID_term_norms plot 1 saved to '{pid_term_norms_plot_1_save_path}'.")
             plt.close()
 
             plt.figure(figsize=(8,6))
@@ -428,28 +463,29 @@ def main(args):
             plt.plot(sampler_record_dict['delta_term_norms'], label='delta_term_norms')
             plt.legend()
             plt.yscale('log', base=2)
-            pid_term_norms_plot_2_save_path = os.path.join(experiment_dir, 'pid_term_norms_plot2.png')
+            pid_term_norms_plot_2_save_path = os.path.join(sampler_record_dir, 'pid_term_norms_plot2.png')
             plt.savefig(pid_term_norms_plot_2_save_path)
-            logger.info(f"PID_term_norms plot 2 saved to '{pid_term_norms_plot_2_save_path}'.")
+            logging.info(f"PID_term_norms plot 2 saved to '{pid_term_norms_plot_2_save_path}'.")
             plt.close()
 
             plt.figure(figsize=(8,6))
             plt.plot(sampler_record_dict['snrs'], label='snrs')
             plt.legend()
-            snr_plot_save_path = os.path.join(experiment_dir,'snr_plot.png')
+            snr_plot_save_path = os.path.join(sampler_record_dir,'snr_plot.png')
             plt.savefig(snr_plot_save_path)
-            logger.info(f"SNR plot saved to '{snr_plot_save_path}'.")
+            logging.info(f"SNR plot saved to '{snr_plot_save_path}'.")
             plt.close()
 
             plt.figure(figsize=(8,6))
             plt.plot(sampler_record_dict['image_norms'], label='image_norms')
             plt.legend()
-            image_norms_plot_save_path = os.path.join(experiment_dir, 'image_norms_plot.png')
+            image_norms_plot_save_path = os.path.join(sampler_record_dir, 'image_norms_plot.png')
             plt.savefig(image_norms_plot_save_path)
-            logger.info(f"Image norms plot saved to '{image_norms_plot_save_path}'.")
+            logging.info(f"Image norms plot saved to '{image_norms_plot_save_path}'.")
             plt.close()
 
         # Result saving
+        logging.info("Saving Experiment Result...")
         result_dict = {
             'experiment_name': args.saving.experiment_name,
             'comment': args.saving.comment,
@@ -485,13 +521,7 @@ def main(args):
         }
         result_save_path = os.path.join(experiment_dir, 'result.json')
         json.dump(result_dict, open(result_save_path, 'w'), indent=4)
-        logger.info("Experiment result saved to '{}'.".format(result_save_path))
-
-        from utils.format import NumpyEncoder
-        config_dict = namespace2dict(args)
-        config_save_path = os.path.join(experiment_dir, 'config.json')
-        json.dump(config_dict, open(config_save_path, 'w'), indent=4, cls=NumpyEncoder)
-        logger.info("Experiment config saved to '{}'.".format(config_save_path))
+        logging.info("Experiment result saved to '{}'.".format(result_save_path))
 
         close_logger(logger)
 

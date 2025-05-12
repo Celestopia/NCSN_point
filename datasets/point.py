@@ -22,7 +22,6 @@ def generate_point_dataset(
         weights_true (np.ndarray): Ratio of points in each cluster. Shape: (n_components,).
         mu_true (np.ndarray): Means of the each cluster. Shape: (n_components, d).
         cov_true (np.ndarray): Covariances of the each cluster. Shape: (n_components, d, d).
-        
 
     Returns:
         samples (np.ndarray): The generated data of shape (n_samples, d).

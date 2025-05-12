@@ -16,7 +16,7 @@ def dict2namespace(config):
 
 
 def namespace2dict(ns):
-    """Convert a Namespace object to a regular dictionary."""
+    """Recursively convert a Namespace object to a regular dictionary."""
     if isinstance(ns, argparse.Namespace):
         d = vars(ns)
         return {k: namespace2dict(v) for k, v in d.items()}
@@ -36,12 +36,48 @@ def get_namespace_value(namespace, keys):
     return value
 
 
-def set_namespace_value(namespace, keys, value):
-    """Set the value of a nested namespace with a series of keys."""
-    for key in keys[:-1]:
-        namespace = getattr(namespace, key)
-    setattr(namespace, keys[-1], value)
+def set_namespace_value(namespace, key:str, value):
+    """Set the value of a nested namespace in-place with a series of keys.
+    
+    Args:
+        namespace (argparse.Namespace): The namespace to be modified.
+        keys (str): A string of keys separated by '.', e.g. "model.num_layers"
+        value: The value to be set.
+    """
+    ks = key.split('.') # Keys, e.g. ['model', 'num_layers']
+    for k in ks[:-1]:
+        namespace = getattr(namespace, k)
+    setattr(namespace, ks[-1], value)
     return namespace
+
+
+def get_leaf_nodes(d:dict, parent_key=''):
+    """Recursively get all leaf nodes in a nested dictionary."""
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}.{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.update(get_leaf_nodes(v, new_key))
+        else:
+            items[new_key] = v
+    return items
+
+
+def compare_dicts(dict1, dict2):
+    """Compare the values of two dictionaries and return the different key-value pairs."""
+    assert dict1.keys() == dict2.keys(), "Keys must be the same"
+
+    different_kv_pairs = {}
+    for key in dict1.keys():
+        assert type(dict1[key]) == type(dict2[key]), "Value types must be the same"
+        assert type(dict1[key]) in [int, float, str, bool, list, tuple], "Unsupported value type: {}".format(type(value1))
+        value1 = dict1[key]
+        value2 = dict2[key]
+
+        if value1!=value2:
+            different_kv_pairs[key] = value2
+
+    return different_kv_pairs
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -49,9 +85,10 @@ class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist() # Convert to list for json serialization.
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         return json.JSONEncoder.default(self, obj)
-
-
-
-
-
