@@ -1,12 +1,12 @@
 """Default hyperparameters for 2-d point dataset."""
 import torch
 import numpy as np
+import os
 
 hyperparameter_dict_default = {
-    'device': 'cuda',
-    'seed': 42,
+    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+    'seed': 76923,
     'model': {
-        'model_name': 'mlp', # options: ['mlp', 'resnet']
         'sigma_begin': 20,
         'sigma_end': 0.01,
         'num_classes': 8,
@@ -19,18 +19,19 @@ hyperparameter_dict_default = {
         'cov_true': [[[1, 0], [0, 1]],
                     [[1, 0], [0, 1]]],
         'n_train_samples': 100000,
-        'n_test_samples': 1280,
+        'n_test_samples': 1280, # Number of generated samples
+        'num_workers': 0, # Number of workers for data loading.
     },
     'training': {
         'batch_size': 128,
         'n_epochs': 60,
-        'train': False,
-        'model_load_path': r"model_weights\scorenet_20_0.01_8.pth", # If not None, load the model from the specified path.
+        'train': False, # If True, train the model. If False, load the pre-trained model.
+        'model_load_path': None, # If not None, load the model from the specified path.
     },
     'sampling': {
-        'sampler': 'pidald', # options: ['ald', 'pidald']
-        'batch_size': 64, # TODO: not used currently
+        'batch_size': 64, # TODO: not used
         'n_steps_each': 150,
+        'n_frames_each': 30, # Number of selected frames at each noise level, where metrics would be calculated.
         'step_lr': 8e-6,
         'k_p': 1.0,
         'k_i': 0.0,
@@ -53,13 +54,12 @@ hyperparameter_dict_default = {
         'weight_decay': 0.000,
     },
     'visualization': {
-        'n_frames_each': 30, # Number of selected frames at each noise level, where metrics would be calculated.
         'figsize': (12,12),
         'trajectory_start_point': [[1,1]], # Starting point of the trajectory. Effective when args.saving.save_trajectory is True.
     },
     'saving': {
-        'result_dir': 'results12345',
-        'experiment_dir_suffix': '',
+        'result_dir': 'results',
+        'experiment_dir_suffix': '', # A suffix to quickly identify the experiment
         'experiment_name': 'default',
         'comment': '',
         'save_model': True,

@@ -17,6 +17,13 @@ import tqdm
 import logging
 import traceback
 import json
+from utils import set_seed
+from datasets.point import generate_point_dataset
+from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, gmm_kl, gmm_log_likelihood
+from Langevin import anneal_dsm_score_estimation, PID_ALD
+from torch.utils.data import DataLoader, TensorDataset
+
+
 sns.set_theme(style="whitegrid")
 matplotlib.use('Agg') # Set the backend to disable figure display window
 os.environ["OMP_NUM_THREADS"] = "5" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
@@ -26,7 +33,6 @@ hyperparameter_dict = {
     'device': 'cuda',
     'seed': 42,
     'model': {
-        'model_name': 'mlp', # options: ['mlp', 'resnet']
         'sigma_begin': 20,
         'sigma_end': 0.01,
         'num_classes': 8,
@@ -39,21 +45,22 @@ hyperparameter_dict = {
         'cov_true': [[[1, 0], [0, 1]],
                     [[1, 0], [0, 1]]],
         'n_train_samples': 100000,
-        'n_test_samples': 1280,
+        'n_test_samples': 1280, # Number of generated samples
+        'num_workers': 0, # Number of workers for data loading.
     },
     'training': {
         'batch_size': 128,
         'n_epochs': 60,
-        'train': False,
+        'train': False, # If True, train the model. If False, load the pre-trained model.
         'model_load_path': r"model_weights\scorenet_20_0.01_8.pth", # If not None, load the model from the specified path.
     },
     'sampling': {
-        'sampler': 'pidald', # options: ['ald', 'pidald']
-        'batch_size': 64, # TODO: not used currently
+        'batch_size': 64, # TODO: not used
         'n_steps_each': 150,
+        'n_frames_each': 30, # Number of selected frames at each noise level, where metrics would be calculated.
         'step_lr': 8e-6,
         'k_p': 1.0,
-        'k_i': 0.1,
+        'k_i': 0.0,
         'k_d': 0.0,
         'k_i_window_size': 150,
         'k_i_decay': 1.00,
@@ -73,13 +80,12 @@ hyperparameter_dict = {
         'weight_decay': 0.000,
     },
     'visualization': {
-        'n_frames_each': 30, # Number of selected frames at each noise level, where metrics would be calculated.
         'figsize': (12,12),
         'trajectory_start_point': [[1,1]], # Starting point of the trajectory. Effective when args.saving.save_trajectory is True.
     },
     'saving': {
-        'result_dir': 'results',
-        'experiment_dir_suffix': '',
+        'result_dir': 'results12345',
+        'experiment_dir_suffix': '', # A suffix to quickly identify the experiment
         'experiment_name': 'default',
         'comment': '',
         'save_model': True,
@@ -120,10 +126,10 @@ def main(args):
                                 str(args.sampling.k_i_decay),
                                 str(args.sampling.k_d_decay),
                                 ))
-        if args.saving.experiment_dir_suffix:
-            experiment_dir += '_' + args.saving.experiment_dir_suffix # Add a suffix to quickly identify the experiment
+        if args.saving.experiment_dir_suffix != '':
+            experiment_dir += '_' + args.saving.experiment_dir_suffix
         elif args.saving.experiment_dir_suffix == '':
-            experiment_dir += '_' + args.saving.experiment_name # Add a name to the experiment directory
+            experiment_dir += '_' + args.saving.experiment_name
 
         if not os.path.exists(experiment_dir):
             os.makedirs(experiment_dir)
@@ -132,6 +138,7 @@ def main(args):
         from utils.log import get_logger, close_logger
         log_file_path = os.path.join(experiment_dir, 'log.log') # Set the log path
         logger = get_logger(log_file_path=log_file_path) # Set and get the root logger
+        logging.info("Experiment directory: '{}'".format(experiment_dir))
 
         # Save the config file
         from utils.format import NumpyEncoder
@@ -147,22 +154,7 @@ def main(args):
 
     try: # Now the logger has been successfully set up, and errors can be logged in the log file.
 
-        from utils import set_seed
         set_seed(args.seed)
-
-        # Data Preparation
-        from datasets.point import generate_point_dataset, PointDataset
-        from torch.utils.data import DataLoader, Dataset
-
-        data = generate_point_dataset(n_samples=args.data.n_train_samples,
-                                        weights_true=np.array(args.data.weights_true),
-                                        mu_true=np.array(args.data.mu_true),
-                                        cov_true=np.array(args.data.cov_true))
-        data = torch.tensor(data, dtype=torch.float32).to(args.device)
-        logging.info("Training data shape: {}".format(data.shape)) # Shape: (n_train_samples, 2)
-
-        train_dataset = PointDataset(data)
-        train_loader = DataLoader(train_dataset, batch_size=args.training.batch_size, shuffle=True, num_workers=0)
 
         # Noise Scale Generation
         sigmas = torch.tensor(
@@ -173,11 +165,11 @@ def main(args):
                             args.model.num_classes
                         )
                     )
-                ).float().to(args.device) # (num_classes,)
+                ).float().to(args.device) # Shape: (num_classes,)
         sigmas_np = sigmas.cpu().numpy()
 
         # Model Configuration
-        from models.simple_models import SimpleNet1d, SimpleResNet
+        from models.simple_models import SimpleNet1d
         from utils import get_act
 
         used_activation = get_act(args.model.activation)
@@ -191,8 +183,16 @@ def main(args):
             logging.info("Model loaded from '{}'.".format(args.training.model_load_path))
 
         if args.training.train:
-            logging.info("Start Model Training")
-            from Langevin import anneal_dsm_score_estimation
+            logging.info(">>>>>>>>>>>>>>>>>>>> Model Training Started >>>>>>>>>>>>>>>>>>>>")
+            
+            # Data Preparation
+            data = generate_point_dataset(n_samples=args.data.n_train_samples,
+                                        weights_true=np.array(args.data.weights_true),
+                                        mu_true=np.array(args.data.mu_true),
+                                        cov_true=np.array(args.data.cov_true))
+            data = torch.tensor(data, dtype=torch.float32).to(args.device) # Shape: (n_train_samples, 2)
+            logging.info("Training data shape: {}".format(data.shape))
+            train_loader = DataLoader(TensorDataset(data), batch_size=args.training.batch_size, shuffle=True, num_workers=args.data.num_workers)
 
             score.train()
             step=0
@@ -211,11 +211,10 @@ def main(args):
                                         args.model.sigma_begin, args.model.sigma_end, args.model.num_classes))
                 torch.save(score.state_dict(), model_save_path)
                 logging.info("Model saved to {}.".format(model_save_path))
+            logging.info("<<<<<<<<<<<<<<<<<<<< Model Training Finished <<<<<<<<<<<<<<<<<<<<")
 
 
         # Sampling
-        from Langevin import anneal_Langevin_dynamics, PID_ALD
-
         gen = torch.Generator()
         gen.manual_seed(42) # Set the seed for random initial noise, so that it will be the same across different runs.
         initial_noise = (16*torch.rand(args.data.n_test_samples,2,generator=gen)-8).to('cpu') # uniformly sampled from [-8, 8]
@@ -226,20 +225,15 @@ def main(args):
 
         all_generated_samples = [initial_noise]
 
-        if args.sampling.sampler == 'ald':
-            sampler = anneal_Langevin_dynamics
-        elif args.sampling.sampler == 'pidald':
-            from functools import partial
-            sampler = partial(PID_ALD,
-                            k_p=args.sampling.k_p,
-                            k_i=args.sampling.k_i,
-                            k_d=args.sampling.k_d,
-                            k_i_window_size=args.sampling.k_i_window_size,
-                            k_i_decay=args.sampling.k_i_decay,
-                            k_d_decay=args.sampling.k_d_decay
-                            )
-        else:
-            raise ValueError("Sampler name `{}` not recognized.".format(args.sampling.sampler))
+        from functools import partial
+        sampler = partial(PID_ALD,
+                        k_p=args.sampling.k_p,
+                        k_i=args.sampling.k_i,
+                        k_d=args.sampling.k_d,
+                        k_i_window_size=args.sampling.k_i_window_size,
+                        k_i_decay=args.sampling.k_i_decay,
+                        k_d_decay=args.sampling.k_d_decay
+                        )
 
         x_mods, sampler_record_dict = sampler(initial_noise.to(args.device), score, sigmas_np,
                         n_steps_each=args.sampling.n_steps_each,
@@ -251,14 +245,12 @@ def main(args):
         if args.saving.save_sample:
             sample_save_path = os.path.join(experiment_dir, 'all_generated_samples.npy')
             np.save(sample_save_path, all_generated_samples)
-            logging.info("Generated samples saved to {}.".format(sample_save_path))
+            logging.info("Generated samples saved to '{}'.".format(sample_save_path))
         del x_mods # Free memory
 
         # Evaluation
-        from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, gmm_kl, gmm_log_likelihood
-
         def evaluate(samples, weights_true, mu_true, cov_true, n_true_samples=1000):
-            """Evaluate the samples using multiple metrics."""
+            """Evaluate the samples at some step using multiple metrics."""
             # samples: (n_samples, 2)
             true_samples = generate_point_dataset(n_samples=n_true_samples, weights_true=weights_true, mu_true=mu_true, cov_true=cov_true) # (1000, 2)
             weights_pred, mu_pred, cov_pred = gmm_estimation(samples)
@@ -269,8 +261,8 @@ def main(args):
             return kl, log_likelihood, mmd2, wasserstein_distance, mu_pred, cov_pred, weights_pred
 
         ## Evaluation - metrics of each frame
-        frame_indices = np.linspace(1, len(all_generated_samples)-1, args.visualization.n_frames_each * args.model.num_classes + 1, dtype=int)
-        frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation, and for animation frames
+        frame_indices = np.linspace(1, len(all_generated_samples)-1, args.sampling.n_frames_each * args.model.num_classes + 1, dtype=int)
+        frame_samples = all_generated_samples[frame_indices] # Select some samples for evaluation and for animation frames
         logging.info("Frame samples shape: {}".format(frame_samples.shape)) # (n_frames, n_test_samples, 2)
 
         logging.info("Start Evaluation...")
@@ -287,21 +279,21 @@ def main(args):
             weights_preds.append(weights_pred)
 
         ## Evaluation - metrics of final samples (with different seeds during sampling)
-        kl_divergence_finals = [kl_divergences[-1]]
-        log_likelihood_finals = [log_likelihoods[-1]]
-        mmd2_finals = [mmd2s[-1]]
-        wasserstein_distance_finals = [wasserstein_distances[-1]]
+        kl_divergence_finals = [] + [kl_divergences[-1]]
+        log_likelihood_finals = [] + [log_likelihoods[-1]]
+        mmd2_finals = [] + [mmd2s[-1]]
+        wasserstein_distance_finals = [] + [wasserstein_distances[-1]]
 
         for sampling_seed in [76923,
                               153846,230769,307692,384615,461538,538461,615384,692307,769230,846153,923076,1000000
-                            ]: # Run sampling with different seeds
+                            ]: # Run sampling process again with different seeds to quantify the variation of metrics
             set_seed(sampling_seed)
             reconstructed_samples, _ = sampler(initial_noise.to(args.device), score, sigmas_np,
                                                             n_steps_each=args.sampling.n_steps_each,
                                                             step_lr=args.sampling.step_lr,
                                                             verbose=False,
-                                                            final_only=True)
-            reconstructed_samples = reconstructed_samples[0].cpu().detach().numpy() # (n_test_samples, 2)
+                                                            final_only=True) # Note final_only=True
+            reconstructed_samples = reconstructed_samples[-1].cpu().detach().numpy() # (n_test_samples, 2)
             kl, log_likelihood, mmd2, wasserstein_distance, _, _, _ = \
                 evaluate(reconstructed_samples, np.array(args.data.weights_true), np.array(args.data.mu_true), np.array(args.data.cov_true))
             kl_divergence_finals.append(kl)
@@ -336,14 +328,14 @@ def main(args):
                 plt.text(0.02, 0.90, "LL:   {:+.3e}".format(log_likelihoods[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
                 plt.text(0.02, 0.85, "MMD2: {:+.3e}".format(mmd2s[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
                 plt.text(0.02, 0.80, "WD:   {:+.3e}".format(wasserstein_distances[f_idx]), fontsize=7, transform=plt.gca().transAxes, fontfamily='consolas')
-                plt.scatter(frame_samples[f_idx][:, 0], frame_samples[f_idx][:, 1], s=1)
-                plt.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+')
-                plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+')
-                plt.scatter([mu_preds[f_idx][0][0]], [mu_preds[f_idx][0][1]], s=10, c='r')
-                plt.scatter([mu_preds[f_idx][1][0]], [mu_preds[f_idx][1][1]], s=10, c='g')
+                plt.scatter(frame_samples[f_idx][:, 0], frame_samples[f_idx][:, 1], s=0.5)
+                plt.scatter([args.data.mu_true[0][0]], [args.data.mu_true[0][1]], s=50, c='r', marker='+') # The ideal center of the first cluster
+                plt.scatter([args.data.mu_true[1][0]], [args.data.mu_true[1][1]], s=50, c='g', marker='+') # The ideal center of the second cluster
+                plt.scatter([mu_preds[f_idx][0][0]], [mu_preds[f_idx][0][1]], s=10, c='r') # The true center of the first cluster
+                plt.scatter([mu_preds[f_idx][1][0]], [mu_preds[f_idx][1][1]], s=10, c='g') # The true center of the second cluster
             fig_save_path = os.path.join(experiment_dir,'sample_plot.png')
             plt.tight_layout() # Adjust subplot spacing to avoid overlap
-            plt.savefig(fig_save_path, dpi=300)
+            plt.savefig(fig_save_path, dpi=300, bbox_inches='tight')
             logging.info("Figure saved to '{}'.".format(fig_save_path))
             plt.close()
 
@@ -405,7 +397,7 @@ def main(args):
 
             fig, axs = plt.subplots(2, 2, figsize=args.visualization.figsize)
 
-            metric_plot_x_coords = [i*args.visualization.n_frames_each for i in range(args.model.num_classes+1)]
+            metric_plot_x_coords = [i*args.sampling.n_frames_each for i in range(args.model.num_classes+1)]
             axs[0,0].set_title('KL divergence')
             axs[0,0].plot(kl_divergences)
             add_vertical_lines(axs[0,0], metric_plot_x_coords)
@@ -442,7 +434,7 @@ def main(args):
             plt.legend()
             plt.yscale('log', base=2)
             grad_pid_norms_plot_save_path = os.path.join(sampler_record_dir, 'grad_pid_norms_plot.png')
-            plt.savefig(grad_pid_norms_plot_save_path)
+            plt.savefig(grad_pid_norms_plot_save_path, bbox_inches='tight')
             logging.info(f"Grad_pid_norms plot saved to '{grad_pid_norms_plot_save_path}'.")
             plt.close()
     
@@ -453,7 +445,7 @@ def main(args):
             plt.legend()
             plt.yscale('log', base=2)
             pid_term_norms_plot_1_save_path = os.path.join(sampler_record_dir, 'pid_term_norms_plot1.png')
-            plt.savefig(pid_term_norms_plot_1_save_path)
+            plt.savefig(pid_term_norms_plot_1_save_path, bbox_inches='tight')
             logging.info(f"PID_term_norms plot 1 saved to '{pid_term_norms_plot_1_save_path}'.")
             plt.close()
 
@@ -464,7 +456,7 @@ def main(args):
             plt.legend()
             plt.yscale('log', base=2)
             pid_term_norms_plot_2_save_path = os.path.join(sampler_record_dir, 'pid_term_norms_plot2.png')
-            plt.savefig(pid_term_norms_plot_2_save_path)
+            plt.savefig(pid_term_norms_plot_2_save_path, bbox_inches='tight')
             logging.info(f"PID_term_norms plot 2 saved to '{pid_term_norms_plot_2_save_path}'.")
             plt.close()
 
@@ -472,7 +464,7 @@ def main(args):
             plt.plot(sampler_record_dict['snrs'], label='snrs')
             plt.legend()
             snr_plot_save_path = os.path.join(sampler_record_dir,'snr_plot.png')
-            plt.savefig(snr_plot_save_path)
+            plt.savefig(snr_plot_save_path, bbox_inches='tight')
             logging.info(f"SNR plot saved to '{snr_plot_save_path}'.")
             plt.close()
 
@@ -480,9 +472,10 @@ def main(args):
             plt.plot(sampler_record_dict['image_norms'], label='image_norms')
             plt.legend()
             image_norms_plot_save_path = os.path.join(sampler_record_dir, 'image_norms_plot.png')
-            plt.savefig(image_norms_plot_save_path)
+            plt.savefig(image_norms_plot_save_path, bbox_inches='tight')
             logging.info(f"Image norms plot saved to '{image_norms_plot_save_path}'.")
             plt.close()
+
 
         # Result saving
         logging.info("Saving Experiment Result...")
@@ -524,6 +517,7 @@ def main(args):
         logging.info("Experiment result saved to '{}'.".format(result_save_path))
 
         close_logger(logger)
+        logging.info("Experiment finished.")
 
         return 0
 

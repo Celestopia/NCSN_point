@@ -1,10 +1,11 @@
 import argparse
 import json
+from types import NoneType
 import numpy as np
 
 
 def dict2namespace(config):
-    """Recursively convert a dictionary to a argparse.Namespace object. Reference: https://github.com/ermongroup/ncsnv2/blob/master/main.py, line 155."""
+    """Recursively convert a nested dictionary to a argparse.Namespace object. Reference: https://github.com/ermongroup/ncsnv2/blob/master/main.py, line 155."""
     namespace = argparse.Namespace()
     for key, value in config.items():
         if isinstance(value, dict):
@@ -37,7 +38,7 @@ def get_namespace_value(namespace, keys):
 
 
 def set_namespace_value(namespace, key:str, value):
-    """Set the value of a nested namespace in-place with a series of keys.
+    """Set the value of a nested namespace **in-place** with a series of keys.
     
     Args:
         namespace (argparse.Namespace): The namespace to be modified.
@@ -59,23 +60,22 @@ def get_leaf_nodes(d:dict, parent_key=''):
         if isinstance(v, dict):
             items.update(get_leaf_nodes(v, new_key))
         else:
-            items[new_key] = v
+            items.update({new_key: v})
     return items
 
 
 def compare_dicts(dict1, dict2):
-    """Compare the values of two dictionaries and return the different key-value pairs."""
+    """Compare the key-value pairs of two dictionaries and return the different ones."""
     assert dict1.keys() == dict2.keys(), "Keys must be the same"
 
     different_kv_pairs = {}
     for key in dict1.keys():
-        assert type(dict1[key]) == type(dict2[key]), "Value types must be the same"
-        assert type(dict1[key]) in [int, float, str, bool, list, tuple], "Unsupported value type: {}".format(type(value1))
         value1 = dict1[key]
         value2 = dict2[key]
-
+        assert type(value1) in [int, float, str, bool, list, tuple, NoneType], "Unsupported value type: {}".format(type(value1))
+        
         if value1!=value2:
-            different_kv_pairs[key] = value2
+            different_kv_pairs.update({key: value2})
 
     return different_kv_pairs
 

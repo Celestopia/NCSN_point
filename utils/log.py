@@ -4,8 +4,8 @@ import sys
 
 def get_logger(log_file_path="training.log"):
     """
-    Return a root logger object to record information in a log file.
-    Use logging.info() anywhere to record information, since this is equivalent to logging.info() when logger is the root logger.
+    Return a **root logger** object to record information in a log file.
+    Use logging.info() anywhere to record information, since this is equivalent to logger.info() when logger is the root logger.
 
     Args:
         log_file_path (str, optional): The path of the log file, where logs will be saved.

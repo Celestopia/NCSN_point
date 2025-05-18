@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import tqdm
 import logging
-from typing import List
+from typing import List, Tuple
 from collections import deque
 
 
@@ -15,6 +15,7 @@ def anneal_dsm_score_estimation(scorenet: nn.Module, samples: torch.Tensor, sigm
         scorenet (nn.Module): a score network that takes in a sample and a label and outputs a score.
         samples (torch.Tensor): a tensor of shape (n_samples, *sample_shape)
         sigmas (torch.Tensor): The standard deviations of different noise levels. Shape (num_classes,)
+    
     Returns:
         loss (Tensor): The loss of NCSN model. Shape: torch.Size([])
     """
@@ -37,7 +38,7 @@ def anneal_dsm_score_estimation(scorenet: nn.Module, samples: torch.Tensor, sigm
 def anneal_Langevin_dynamics(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: torch.Tensor,
                                 n_steps_each: int=200, step_lr: float=0.000008,
                                 final_only: bool=False, verbose: bool=False, denoise: bool=True) -> List[torch.Tensor]:
-    """
+    """[Deprecated]
     Return the denoised samples using annealed Langevin dynamics. Reference: https://github.com/ermongroup/ncsnv2/blob/master/models/__init__.py, line 20.
 
     Args:
@@ -96,9 +97,9 @@ def anneal_Langevin_dynamics(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: t
 def PID_ALD(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: np.ndarray,
                 n_steps_each: int=200, step_lr: float=0.000008,
                 k_p: float=1.0, k_i: float=0.0, k_d: float=0.0,
-                k_i_window_size: int=10, k_i_decay: float=1.00, k_d_decay: float=1.00,
+                k_i_window_size: int=100, k_i_decay: float=1.00, k_d_decay: float=1.00,
                 final_only: bool=False, denoise: bool=True, verbose: bool=False,
-                log_freq: int=1,) -> List[torch.Tensor]:
+                log_freq: int=1,) -> Tuple[List[torch.Tensor], dict]:
     """
     Return the denoised samples using `PID-controlled Anneal Langevin Dynamics`.
 
@@ -185,8 +186,9 @@ def PID_ALD(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: np.ndarray,
                 e_t = grad
                 e_diff = e_t - e_prev if t>0 else torch.zeros_like(x_mod).to(x_mod.device) # For the first sampling step of a noise level, e_diff is set to 0 to avoid being too large
                 
+                # !IMPORTANT: Sample Updating Formula
                 noise = torch.randn_like(x_mod) # (n_samples, *sample_shape)
-                x_mod = x_mod + step_size * (k_p * grad + k_i * e_int + k_d * e_diff) + noise * np.sqrt(step_size * 2) # !IMPORTANT: Sample Updating Formula
+                x_mod = x_mod + step_size * (k_p * grad + k_i * e_int + k_d * e_diff) + noise * np.sqrt(step_size * 2)
                 
                 if not final_only:
                     images.append(x_mod.to('cpu'))

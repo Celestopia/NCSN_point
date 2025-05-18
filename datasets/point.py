@@ -1,6 +1,4 @@
-import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
 
 
 def generate_point_dataset(
@@ -18,7 +16,6 @@ def generate_point_dataset(
 
     Args:
         n_samples (int): The total number of samples (points) to generate.
-        sample_ratios (list): Ratio of points in each cluster.
         weights_true (np.ndarray): Ratio of points in each cluster. Shape: (n_components,).
         mu_true (np.ndarray): Means of the each cluster. Shape: (n_components, d).
         cov_true (np.ndarray): Covariances of the each cluster. Shape: (n_components, d, d).
@@ -41,19 +38,7 @@ def generate_point_dataset(
     return samples
 
 
-class PointDataset(Dataset):
-    """Dataset of points in two-dimensional space."""
-    def __init__(self, data: torch.Tensor):
-        self.data = data # Shape: (n_samples, 2)
-
-    def __len__(self):
-        return len(self.data) # n_samples
-
-    def __getitem__(self, idx):
-        return self.data[idx] # Shape: (2,)
-
-
-if __name__ == '__main__':
+if __name__ == '__main__': # For testing purposes only.
     import matplotlib.pyplot as plt
     
     n_samples = 1000

@@ -1,7 +1,16 @@
-Implementation of NCSN++ on 2-d point dataset. Just for personal use.
+Implementation of NCSNv2 on 2-d point dataset. Just for personal use.
 
-Run `run.py` to conduct multiple experiments.
+Run `run1.py` to conduct a single experiment with command line arguments.
 
-Results will be saved in `results` directory.
+Example:
+```bash
+python run.py --k_i 0.1 --k_d 6.0
+```
 
-Incomplete version - 20250512.
+Run `run2.py` to conduct multiple experiments. You can customize the experiment loops by modifying `run2.py`.
+
+All results will be saved in `results` directory.
+
+For more details, please start from `main.py`. The structure and logic of this project are well documented in the comments.
+
+--version20250519

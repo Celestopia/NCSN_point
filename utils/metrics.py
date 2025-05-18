@@ -1,4 +1,4 @@
-"""Metrics for quality of generation"""
+"""Metrics for generation quality"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,8 +21,8 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
     Wasserstein distance between two groups of samples.
     
     Args:
-        X (np.ndarray): Array of shape (n_x, d).
-        Y (np.ndarray): Array of shape (n_y, d).
+        X (np.ndarray): Array of shape (nx, d).
+        Y (np.ndarray): Array of shape (ny, d).
         p (int): Wasserstein distance power. Options: [1, 2].
         numItermax (int): Maximum number of iterations for the OT solver.
     
@@ -31,7 +31,7 @@ def sample_wasserstein_distance(X, Y, p=1, numItermax=1000000):
     """
     a = np.ones(len(X)) / len(X) # Set probability mass (uniform distribution)
     b = np.ones(len(Y)) / len(Y)
-    M = ot.dist(X, Y, metric='euclidean') # Euclidean distance matrix of shape (n_x, n_y), where M_{ij} = d(x_i, y_j).
+    M = ot.dist(X, Y, metric='euclidean') # Euclidean distance matrix of shape (nx, ny), where M_{ij} = d(x_i, y_j).
 
     if p == 1:
         return ot.emd2(a, b, M, numItermax=numItermax)
@@ -58,10 +58,10 @@ def sample_mmd2_rbf(X, Y, sigma=1.0):
     def rbf_kernel_distance(x, y, sigma=1.0):
         # x (np.ndarray): array of shape (nx, d)
         # y (np.ndarray): array of shape (ny, d)
-        x_sqnorms = np.sum(x**2, axis=1) # shape: (nx,)
-        y_sqnorms = np.sum(y**2, axis=1) # shape: (ny,)
-        distances = x_sqnorms[:, None] + y_sqnorms[None, :] - 2 * np.dot(x, y.T) # shape: (nx, ny)
-        return np.exp(-distances / (2 * sigma**2)) # shape: (nx, ny)
+        x_sqnorms = np.sum(x**2, axis=1) # Shape: (nx,)
+        y_sqnorms = np.sum(y**2, axis=1) # Shape: (ny,)
+        distances = x_sqnorms[:, None] + y_sqnorms[None, :] - 2 * np.dot(x, y.T) # Shape: (nx, ny)
+        return np.exp(-distances / (2 * sigma**2)) # Shape: (nx, ny)
     
     m, n = X.shape[0], Y.shape[0]
     
@@ -173,7 +173,7 @@ def gmm_log_likelihood(x, weights, means, covs):
 
 
 
-if __name__ == '__main__':
+if __name__ == '__main__': # For testing purposes only.
     n_samples = 10000
     d = 2
 
