@@ -1,4 +1,4 @@
-Implementation of NCSNv2 on 2-d point dataset. Just for personal use.
+Implementation of NCSNv2 on 2-d point dataset.
 
 Run `run1.py` to conduct a single experiment with command line arguments.
 
@@ -12,5 +12,3 @@ Run `run2.py` to conduct multiple experiments. You can customize the experiment 
 All results will be saved in `results` directory.
 
 For more details, please start from `main.py`. The structure and logic of this project are well documented in the comments.
-
---version20250519
