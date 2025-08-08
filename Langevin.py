@@ -97,7 +97,7 @@ def anneal_Langevin_dynamics(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: t
 def PID_ALD(x_mod: torch.Tensor, scorenet: nn.Module, sigmas: np.ndarray,
                 n_steps_each: int=200, step_lr: float=0.000008,
                 k_p: float=1.0, k_i: float=0.0, k_d: float=0.0,
-                k_i_window_size: int=100, k_i_decay: float=1.00, k_d_decay: float=1.00,
+                k_i_window_size: int=150, k_i_decay: float=1.00, k_d_decay: float=1.00,
                 final_only: bool=False, denoise: bool=True, verbose: bool=False,
                 log_freq: int=1,) -> Tuple[List[torch.Tensor], dict]:
     """

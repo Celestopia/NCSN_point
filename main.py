@@ -1,105 +1,29 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
+import os
+import time
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
-import sys
-import time
-import argparse
-import random
+import torch
+import torch.optim as optim
+import yaml
+import json
 import logging
-import copy
 import tqdm
 import logging
 import traceback
-import json
-from utils import set_seed
-from datasets.point import generate_point_dataset
-from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, gmm_kl, gmm_log_likelihood
-from Langevin import anneal_dsm_score_estimation, PID_ALD
+
 from torch.utils.data import DataLoader, TensorDataset
+from utils import set_seed
+from utils.metrics import sample_wasserstein_distance, gmm_estimation, sample_mmd2_rbf, gmm_kl, gmm_log_likelihood
+from utils.format import dict2namespace, namespace2dict
+from datasets.point import generate_point_dataset
+from Langevin import anneal_dsm_score_estimation, PID_ALD
 
 
 sns.set_theme(style="whitegrid")
 matplotlib.use('Agg') # Set the backend to disable figure display window
 os.environ["OMP_NUM_THREADS"] = "5" # To avoid the warning: KMeans is known to have a memory leak on Windows with MKL, when there are less chunks than available threads. You can avoid it by setting the environment variable OMP_NUM_THREADS=1.
-
-
-hyperparameter_dict = {
-    'device': 'cuda',
-    'seed': 42,
-    'model': {
-        'sigma_begin': 20,
-        'sigma_end': 0.01,
-        'num_classes': 8,
-        'activation': 'softplus',
-        'hidden_dim': 128,
-    },
-    'data': {
-        'weights_true': [0.80, 0.20],
-        'mu_true': [[5, 5], [-5, -5]],
-        'cov_true': [[[1, 0], [0, 1]],
-                    [[1, 0], [0, 1]]],
-        'n_train_samples': 100000,
-        'n_test_samples': 1280, # Number of generated samples
-        'num_workers': 0, # Number of workers for data loading.
-    },
-    'training': {
-        'batch_size': 128,
-        'n_epochs': 60,
-        'train': False, # If True, train the model. If False, load the pre-trained model.
-        'model_load_path': r"model_weights\scorenet_20_0.01_8.pth", # If not None, load the model from the specified path.
-    },
-    'sampling': {
-        'batch_size': 64, # TODO: not used
-        'n_steps_each': 150,
-        'n_frames_each': 30, # Number of selected frames at each noise level, where metrics would be calculated.
-        'step_lr': 8e-6,
-        'k_p': 1.0,
-        'k_i': 0.0,
-        'k_d': 0.0,
-        'k_i_window_size': 150,
-        'k_i_decay': 1.00,
-        'k_d_decay': 1.00,
-    },
-    'logging': {
-        'training_log_freq': 100,
-        'sampling_verbose': True,
-        'sampling_log_freq': 1,
-    },
-    'optim': {
-        'optimizer': 'adam',
-        'lr': 0.0001,
-        'beta1': 0.9,
-        'beta2': 0.999,
-        'eps': 1e-8,
-        'weight_decay': 0.000,
-    },
-    'visualization': {
-        'figsize': (12,12),
-        'trajectory_start_point': [[1,1]], # Starting point of the trajectory. Effective when args.saving.save_trajectory is True.
-    },
-    'saving': {
-        'result_dir': 'results12345',
-        'experiment_dir_suffix': '', # A suffix to quickly identify the experiment
-        'experiment_name': 'default',
-        'comment': '',
-        'save_model': True,
-        'save_sample': True,
-        'save_figure': True,
-        'save_animation': False,
-        'save_trajectory': False,
-        'save_generation_metric_plot': True,
-        'save_sampler_record_plot': True,
-    },
-}
-from utils.format import dict2namespace, namespace2dict
-args=dict2namespace(hyperparameter_dict)
-
 
 
 def main(args):
@@ -174,7 +98,8 @@ def main(args):
 
         used_activation = get_act(args.model.activation)
         score = SimpleNet1d(data_dim=2, hidden_dim=args.model.hidden_dim, sigmas=sigmas, act=used_activation).to(args.device)
-        optimizer = optim.Adam(score.parameters(), lr=args.optim.lr, weight_decay=args.optim.weight_decay, betas=(args.optim.beta1, args.optim.beta2), eps=args.optim.eps)
+        optimizer = optim.Adam(score.parameters(), lr=args.optim.lr,
+                                weight_decay=args.optim.weight_decay, betas=(args.optim.beta1, args.optim.beta2), eps=args.optim.eps)
 
 
         # Training
@@ -223,7 +148,8 @@ def main(args):
             trajectory_start_point = torch.tensor(args.visualization.trajectory_start_point) # (1,2)
             initial_noise = torch.concat([trajectory_start_point, initial_noise], dim=0) # (n_test_samples+1, 2)
 
-        all_generated_samples = [initial_noise]
+        all_generated_samples = []
+        all_generated_samples.append(initial_noise)
 
         from functools import partial
         sampler = partial(PID_ALD,
@@ -530,5 +456,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+    with open(os.path.join('configs', 'point.yml'), 'r') as f:
+        config_dict = yaml.load(f, Loader=yaml.FullLoader)
+    config_dict['saving']['result_dir'] = 'results111'
+    args = dict2namespace(config_dict)
     main(args)
-

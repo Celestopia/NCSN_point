@@ -1,8 +1,9 @@
 """Run experiments with command line arguments."""
+import os
+import yaml
 import argparse
 import copy
 from main import main
-from configs.point import hyperparameter_dict_default
 from exp import Exp
 
 
@@ -16,6 +17,8 @@ parser.add_argument('--k_d', type=float, default=None, help='value of k_d')
 parser.add_argument('--k_i_decay', type=float, default=None, help='value of k_i_decay')
 args = parser.parse_args()
 
+with open(os.path.join('configs', 'point.yml'), 'r') as f:
+    hyperparameter_dict_default = yaml.load(f, Loader=yaml.FullLoader)
 hyperparameter_dict_default['saving']['result_dir'] = args.result_dir
 hyperparameter_dict_default['training']['model_load_path'] = args.model_load_path
 exp = Exp(main, hyperparameter_dict_default)
